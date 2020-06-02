@@ -1,5 +1,5 @@
 
-# A Deep Learning Test Yard, based on Tensorflow2
+# A Deep Learning Test Yard (under construction, supports TF2 by now)
 
 ## Aims
 - Wraps _implementation_ details (esp. there are so many alternatives) so as to highlight DL domain concepts and workflows.
