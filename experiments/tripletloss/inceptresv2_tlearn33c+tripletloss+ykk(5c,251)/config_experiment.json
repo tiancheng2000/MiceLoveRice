@@ -1,0 +1,119 @@
+{
+    "description": "YKK Demo 2019/12",
+    "__BaseModelParams__": [
+        {"name": "", "signature": ""}
+    ],
+    "model_set": {
+        "model_base": {
+            "signature": "tf.saved_model.load",
+            "format": "SavedModelDir",
+            "path": "/tmp/imagenet/inception_resnet_v2/3"
+        },
+        "model_trained": {
+            "description": "used only for importing legacy TF1.x .pb model. inputs/outputs can be lists of tensor names",
+            "signature": "tf.import_graph_def",
+            "format": "PB",
+            "path": {
+                "format": "experiments/{}/inceptionresnetv2+tlearn33class.pb",
+                "arg_names": ["experiment_name"]
+            },
+            "inputs": "Placeholder:0",
+            "outputs": "final_retrain_ops/dense/BottleneckRetrained/Relu:0"
+        },
+        "model_trained.2": {
+            "signature": "keras.models.load_model",
+            "format": "SavedModelFile",
+            "path": {
+                "format": "/tmp/ckpt/{}/model_trained.tf",
+                "arg_names": ["experiment_name"]
+            }
+        }
+    },
+    "data_set": {
+        "data": {
+            "signature": "labeled_folders",
+            "format": "Path",
+            "path": "/tmp/Dataset/20190516 YKK ZipperHeader Images/TripletLoss/拉头_圆形（无字vs(有字,拉孔_其它#1(星形))）",
+            "labels_ordered_in_train": ["0","1","3","10","11"],
+            "fixed_seed": 2020,
+            "category": "train",
+            "test_split": 0,
+            "decode_x": {
+                "name": "decode_image_file",
+                "encoding": "jpg",
+                "colormode": "grayscale",
+                "reshape": [-1, 299, 299, 1],
+                "normalize": true
+            }
+        },
+        "data_simple_test": {
+            "signature": "single_file",
+            "format": "Path",
+            "path": "/tmp/ykk_snowflake_white.jpg",
+            "decode_x": {
+                "name": "decode_image_file",
+                "colormode": "grayscale",
+                "reshape": [-1, 299, 299, 1],
+                "normalize": true
+            }
+        },
+        "data_ui_web": {
+            "description": "listen to ui event and accept data",
+            "signature": "ui_web_files",
+            "format": "Paths",
+            "decode_x": {
+                "name": "decode_image_file",
+                "colormode": "grayscale",
+                "reshape": [-1, 299, 299, 1],
+                "normalize": true
+            }
+        }
+    },
+    "train": {
+        "enabled": false,
+        "learning_rate": 1e-3,
+        "validation_split": 0.2,
+        "epochs": 250,
+        "batch": 48,
+        "loss": {
+            "signature": "tripletloss",
+            "embedding_size": 1008,
+            "strategy": "batch_all",
+            "distance": {
+                "margin": 0.5,
+                "squared": false
+            }
+        },
+        "summary": {
+            "description": "TODO: not implemented yet. ref:`tf.estimator.Estimator`'s config `save_summary_steps`",
+            "frequency": "step:50"
+        },
+        "checkpoint": {
+            "description": "save/load trainable weights and variables",
+            "signature": "tf.keras.Model.load_weights",
+            "format": "CKPT_dir",
+            "path": {
+                "format": "/tmp/ckpt/{}",
+                "arg_names": ["experiment_name"]
+            },
+            "load_weights": "latest",
+            "save_weights": {
+                "frequency": "epoch"
+            }
+        },
+        "early_stop": {
+            "monitor": "val_loss",
+            "patience": 10
+        },
+        "save_model": {
+            "format": "SavedModel"
+        },
+        "show_result": {
+            "plotter": "matplot",
+            "metrics": ["loss", "acc", "precision", "recall"]
+        }
+    },
+    "predict": {
+        "enabled": true
+    }
+}

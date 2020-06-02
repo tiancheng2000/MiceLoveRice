@@ -1,0 +1,36 @@
+<!doctype html>
+<title>Upload Sample Page</title>
+<h3>(This is a sample page only)</h3>
+<ul class=flashes>
+	<li>action: use `action="/uploads"`</li>
+	<li>messages: action will append possible feedback `(category, message)` to `session["_flashes"]`.</li>
+	<li>redirect url: </li>
+</ul>
+<h2>Select an image file to upload:</h2>
+<p>
+	{% with messages = get_flashed_messages() %}
+	  {% if messages %}
+		<ul class=flashes>
+		{% for message in messages %}
+		  <li>{{ message }}</li>
+		{% endfor %}
+		</ul>
+	  {% endif %}
+	{% endwith %}
+</p>
+{% if filename %}
+	<div>
+		<img src="{{ url_for('upload_get', filename=filename) }}">
+	</div>
+{% endif %}
+<form method="post" action="/api/0.1/uploads" enctype="multipart/form-data">
+    <dl>
+		<p>
+			<input type="file" name="file" autocomplete="off" required>
+		</p>
+    </dl>
+    <p>
+		<input type="hidden" name="redirect_url" value="/samples/upload_ui">
+		<input type="submit" value="Submit">
+	</p>
+</form>

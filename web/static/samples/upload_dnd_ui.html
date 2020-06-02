@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+	<meta http-equiv="Content-Type" content="text/html;charset=utf-8">
+    <title>Demo</title>
+</head>
+
+<style>
+#message { border: 1px solid #eee; width: 75%; margin: 5px auto; background-color: #ffe; padding: 2px; font-size: 14px; float: left;}
+/* for dragndrop file upload */
+#holder { border: 8px dashed #ccc; width: 75%; min-height: 150px; margin: 5px auto; float: left; clear: left;}
+#holder.hover { border: 8px dashed #0c0; }
+#holder img { display: block; margin: 5px auto; }
+#holder p { margin: 10px; font-size: 14px; color: #ccc}
+#progress { width: 74%; float: left; clear: left;}
+#progress_div span { float: left; font-size: 10px; color: #ccc}
+.fail { background: #c00; padding: 2px; color: #fff; }
+.hidden { display: none !important; }
+</style>
+
+<script type="text/javascript">
+function ajaxRequest(method, url) {ajaxRequest(method, url, null, null);}
+function ajaxRequest(method, url, request) {ajaxRequest(method, url, request, null);}
+function ajaxRequest(method, url, request, callback) {
+	var xhr = new XMLHttpRequest();
+	xhr.open(method, url, true);
+	xhr.onload = (callback!=null) ? callback : function() {
+		debugger;
+		//document.body.innerHTML = xhr.responseText;
+	};
+	xhr.send(request);
+}
+</script>
+
+<body>
+<h2>Input of Remote Tasks:</h2>
+<div>
+	<div id="message">AAA
+	</div>
+	<div id="holder">
+		<p>Drop Images Here.</p>
+	</div>
+	<div>
+		<p id="upload" class="hidden"><label>Drag & drop not supported, but you can still upload via this input field:<br><input type="file" name="file"></label></p>
+		<p id="test_filereader">File API & FileReader API not supported</p>
+		<p id="test_formdata">XHR2's FormData is not supported</p>
+		<p id="test_progress">XHR2's upload progress isn't supported</p>
+	</div>
+	<div id="progress_div">
+		<progress id="progress" max="100" value="0"></progress><span>&nbsp;</span><span id="progress_value">0</span><span>%</span>
+	</div>
+</div>
+</body>
+
+<script type="text/javascript">
+//for drag&drop file upload -- BEGIN --
+var holder = document.getElementById('holder')
+, message = document.getElementById('message')
+, tests = {
+	dnd : 'draggable' in document.createElement('span'),
+	filereader : typeof FileReader != 'undefined',
+	formdata : !!window.FormData,
+	progress : "upload" in new XMLHttpRequest
+}, support = {
+	filereader : document.getElementById('test_filereader'),
+	formdata : document.getElementById('test_formdata'),
+	progress : document.getElementById('test_progress')
+}, acceptedTypes = {
+	'image/png' : true,
+	'image/jpeg' : true,
+	'image/gif' : true
+}, progress = document.getElementById('progress')
+, progress_value = document.getElementById('progress_value')
+, fileupload = document.getElementById('upload');
+
+"filereader formdata progress".split(' ').forEach(function(api) {
+	if (tests[api] === false) {
+		support[api].className = 'fail';
+	} else {
+		// FFS. I could have done el.hidden = true, but IE doesn't support
+		// hidden, so I tried to create a polyfill that would extend the
+		// Element.prototype, but then IE10 doesn't even give me access
+		// to the Element object. Brilliant.
+		support[api].className = 'hidden';
+	}
+});
+
+function clearPreview() {
+	while (holder.lastChild.tagName == 'IMG') {
+		holder.removeChild(holder.lastChild)
+	}
+}
+
+function previewfile(file) {
+	if (tests.filereader === true && acceptedTypes[file.type] === true) {
+		var reader = new FileReader();
+		reader.onload = function(event) {
+			var image = new Image();
+			image.src = event.target.result;
+			image.width = 250; // a fake resize
+			holder.appendChild(image);
+		};
+		reader.readAsDataURL(file);
+	} else {
+		holder.innerHTML += '<p>Uploaded ' + file.name + ' '
+				+ (file.size ? (file.size / 1024 | 0) + 'K' : '');
+		console.log(file);
+	}
+}
+
+function readfiles(files) {
+	debugger;
+
+	//NOTE: For PUT method we can only upload 1 file for 1 xhr. (use multiple xhrs for multiple files.)
+	var formData = tests.formdata ? new FormData() : null;
+	clearPreview();
+	for (var i = 0; i < files.length; i++) {
+		if (tests.formdata)
+			formData.append('file', files[i]);
+		previewfile(files[i]);
+	}
+
+	// now post a new XHR request
+	if (tests.formdata) {
+		var xhr = new XMLHttpRequest();
+		xhr.open('POST', '/api/0.1/uploads', true);
+		//xhr.setRequestHeader("Content-Type","multipart/form-data");
+		xhr.onload = function() {
+			progress.value = progress_value.innerHTML = 100;
+			message.innerHTML = this.responseText;  //this.responseXML(.responseType='document'), this.response(else)
+		};
+
+		if (tests.progress) {
+			xhr.upload.onprogress = function(event) {
+				if (event.lengthComputable) {
+					var complete = (event.loaded / event.total * 100 | 0);
+					progress.value = progress_value.innerHTML = complete;
+				}
+			}
+		}
+		xhr.send(formData);
+	}
+}
+
+if (tests.dnd) {
+	holder.ondragover = function() {
+		this.className = 'hover';
+		return false;
+	};
+	holder.ondragend = function() {
+		this.className = '';
+		return false;
+	};
+	holder.ondrop = function(e) {
+		this.className = '';
+		e.preventDefault();
+		readfiles(e.dataTransfer.files);
+	}
+} else {
+	fileupload.className = '';
+	fileupload.querySelector('input').onchange = function() {
+		readfiles(this.files);
+	};
+}
+//for drag&drop file upload -- END --
+</script>
+
+</html>

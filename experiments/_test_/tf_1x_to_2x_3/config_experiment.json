@@ -1,0 +1,92 @@
+{
+    "description": "Derived from TF1to2 tutorial section 3: MNIST_TF2_Keras_Dataset",
+    "__BaseModelParams__": [
+        {"name": "", "signature": ""}
+    ],
+    "model_set": {
+        "model_base": {
+            "name": "{conv-pool}*2-flat-dense-drop-dense",
+            "signature": "keras.Sequential",
+            "format": "Name",
+            "input_shape": [-1, 28, 28, 1]
+        },
+        "model_trained": {
+            "signature": "keras.models.load_model",
+            "format": "SavedModelFile",
+            "path": {
+                "format": "/tmp/ckpt/{}/model_trained.tf",
+                "arg_names": ["experiment_name"]
+            }
+        }
+    },
+    "data_set": {
+        "data": {
+            "name": "mnist",
+            "signature": "tf.keras.datasets.load_data",
+            "format": "Name",
+            "decode_x": {
+                "normalize": true,
+                "reshape": [-1, 28, 28, 1]
+            }
+        },
+        "data_simple_test": {
+            "signature": "labeled_folders",
+            "format": "Path",
+            "path": "/tmp/Dataset/mnist/test",
+            "labels_ordered_in_train": ["0","1","2","3","4","5","6","7","8","9_"],  
+            "fixed_seed": 2020,
+            "category": "test",
+            "test_split": 1.0,
+            "decode_x": {
+                "name": "decode_image_file",
+                "encoding": "jpg",
+                "colormode": "grayscale",
+                "color_transform": "complementary",
+                "normalize": true
+            }
+        }
+    },
+    "train": {
+        "enabled": false,
+        "validation_split": 0.2,
+        "epochs": 5,
+        "batch": 48,
+        "checkpoint": {
+            "signature": "tf.keras.Model.load_weights",
+            "format": "CKPT_dir",
+            "path": {
+                "format": "/tmp/ckpt/{}",
+                "arg_names": ["experiment_name"]
+            },
+            "load_weights": "latest",
+            "save_weights": {
+                "frequency": "epoch"
+            }
+        },
+        "early_stop": {
+            "monitor": "val_loss",
+            "patience": 10
+        },
+        "save_model": {
+            "format": "SavedModel"
+        },
+        "show_result": {
+            "plotter": "matplot",
+            "metrics": ["loss", "acc", "precision", "recall"]
+        }
+    },
+    "predict": {
+        "enabled": true,
+        "decode_prediction": {
+            "name": "logits_to_index"
+        },
+        "show_result": {
+            "plotter": "",
+            "save_path": {
+                "arg_names": ["experiment_path"]
+            },
+            "top_k": 100,
+            "only_difference": true
+        }
+    }
+}
