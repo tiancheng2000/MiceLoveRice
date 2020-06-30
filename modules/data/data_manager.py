@@ -2,7 +2,7 @@
 import enum
 import os.path as osp
 
-from helpers.util import DEBUG, INFO, WARN, ERROR, Params, dump_iterable_data, path_possibly_formatted
+from helpers.util import DEBUG, INFO, WARN, ERROR, Params, dump_iterable_data, path_possibly_formatted, ensure_web_app
 
 __all__ = [
     "DataManager",
@@ -18,6 +18,7 @@ class _DataSignature(enum.Enum):
     TFKerasDataset = ("tf.keras.datasets.load_data", "Name",
                       "mnist, fashion_mnist, boston_housing, imdb, cifar10/100, reuters. "
                       "Result: tuple of numpy array `(x_train, y_train), (x_test, y_test)`")
+    UI_Web_Files = ("ui_web_files", "Paths", "listen to ui web event (uploads) to get data")
     # -- TF1.x ---------------------------------------
     LabeledFolders = ("labeled_folders", "Path")
     SingleFile = ("single_file", "Path")
@@ -25,10 +26,10 @@ class _DataSignature(enum.Enum):
                                   "e.g. 'train-images-idx3-ubyte'(images), 'train-labels-idx1-ubyte'(labels) of mnist. "
                                   "`header_bytes` required to truncate file header")
 
-    def __init__(self, signature: str, formats, comment=None):
+    def __init__(self, signature: str, formats, memo=None):
         self.signature = signature
         self.formats = formats if isinstance(formats, list) else [formats]
-        self.__doc__ = comment
+        self.__doc__ = memo
 
 
 class DataManager:
@@ -56,6 +57,7 @@ class DataManager:
         """
         data = None
         params_data = Params(
+            timeout=0,
             test_split=0.2, fixed_seed=None,
             decode_x=Params(colormode=None, resize_w=None, resize_h=None, preserve_aspect_ratio=True,
                             normalize=True, reshape=[]),
@@ -93,7 +95,6 @@ class DataManager:
             # IGNORED: meta_info returns no value. test_split has no use. fixed_seed not used.
         elif data_signature == _DataSignature.SingleFile.signature:
             path = DataManager._validate_path(params_data.path)
-            params_data = Params(file_exts=['jpg']).update_to(params_data)
             params_decode = Params(encoding='jpg', colormode=None, reshape=None,
                                    preserve_aspect_ratio=True,
                                    color_transform=None, normalize=True).left_join(params_data.decode_x)
@@ -102,6 +103,78 @@ class DataManager:
             # IMPROVE: accept different kinds of input data
             data_t = decode_tf.decode_image_file(tf.convert_to_tensor(path), **params_decode)
             data = tf.data.Dataset.from_tensors(data_t)
+        elif data_signature == _DataSignature.UI_Web_Files.signature:
+            # path = DataManager._validate_path(params_data.path)
+            params_decode = Params(encoding='jpg', colormode=None, reshape=None,
+                                   preserve_aspect_ratio=True,
+                                   color_transform=None, normalize=True).left_join(params_data.decode_x)
+            data = None
+
+            webapp = ensure_web_app()  # will load config from Path.DeployConfigAbs
+            INFO(f'waiting for data input from web app {webapp.host}:{webapp.port}')  # IMPROVE: hint upload url
+            from async_ import AsyncLoop, AsyncManager, amend_blank_cbs
+            from helpers.util import track_entry_and_exit, load_image_mat, async_show_image_mats
+            import asyncio
+            this_task: asyncio.Task = None
+
+            @track_entry_and_exit.coro()
+            async def coro_consume_files(filepath_or_list, cbs):
+                nonlocal this_task
+                assert this_task is not None, '`this_task` should have been assigned before entering related coro.'
+
+                import modules.data.decode_tf as decode_tf
+                import tensorflow as tf
+
+                DEBUG(f'[coro_consume_inputs]: {locals()}')
+                on_done, on_succeeded, on_failed, on_progress = amend_blank_cbs(cbs)
+                filepaths = filepath_or_list if isinstance(filepath_or_list, list) else [filepath_or_list]
+                result = {}  # data: tf.data.Dataset::{image_t}, error: optional(str)
+
+                # from helpers.tf_helper import image_example
+                # IMPROVE: try to use TFRecordDataset.from_tensors([tf_example])
+
+                def map_path_to_image(path_t):
+                    return decode_tf.decode_image_file(path_t, **params_decode)
+
+                data = tf.data.Dataset.from_tensor_slices(filepaths)
+                this_task.progress = 0.5
+                data = data.map(map_path_to_image)
+                this_task.progress = 1.0
+                result.update({'data': data})
+                # # if show inputs
+                # try:
+                #     asynctask = async_show_image_mats(image_mats)
+                #     result.update({'asynctask_id': asynctask.id})
+                # except Exception as e:
+                #     result.update({'error': e.__repr__()})
+                on_done(result)
+                # TODO: how to link to the next task (e.g. model.predict) so user can monitor process.
+                return result    # == this_task.set_result(result)
+
+            def on_done_consume_inputs(result):
+                """
+                If using task.set_result, set_exception etc and wait for task instead of data,
+                callbacks will be optional.
+                """
+                nonlocal data
+                INFO(f'on_done_consume_inputs: {result}')
+                data = result.get('data', None)
+
+            @webapp.on_uploads(namespace="data_manager::ui_web_files", onetime=True)
+            def handle_ui_web_files(filepath_or_list):
+                nonlocal this_task
+                this_task = AsyncManager.run_task(coro_consume_files(filepath_or_list, (on_done_consume_inputs,)))
+                handler_result = {'asynctask_id': this_task.id}
+                return handler_result
+
+            # wait until get data uploaded
+            import asyncio
+            loop = asyncio.get_event_loop()
+            async def coro_simple_wait(timeout=None):
+                while data is None:  # IMPROVE: implement timeout. maybe wait_for(this_task)
+                    await asyncio.sleep(1)
+            loop.run_until_complete(coro_simple_wait(timeout=None))
+            pass
         else:
             raise ValueError(f"Unsupported data signature: {data_signature}")
         # TODO: consider shuffle, repeat(epoch), batch(batch_size), prefetch(1) for train/predict, use tf.data.Database

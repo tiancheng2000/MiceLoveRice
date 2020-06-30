@@ -30,6 +30,7 @@ Key can be name of the data source used, e.g.`data`, `data_simple_test`
       "arg_names": ["experiment_name"]
   }
   ```
+- timeout: _(only implemented for `ui_web_files`)_ _int_, `0` means will wait until data retrieved.
 - labels_ordered_in_train: e.g.`["0","1","3","10","11"]`
 - fixed_seed: _int_
 - category = `"train"` | `"test"` | `"all"`
@@ -66,12 +67,14 @@ Key can be name of the data source used, e.g.`data`, `data_simple_test`
   - format = `"SavedModel"` | `"HDF5"`
   - path: cannot be specified. will be saved to checkpoint path with filename of `model_trained` and fileext of `.tf` or `.h5`
 - show_result
-  - plotter = `"matplot"`
+  - plotter = `"matplot"` | `"remotetask"`
   - metrics: e.g.`["loss", "acc", "precision", "recall"]`
 
 
 ## predict
 - enable = `true` | `false`
+- remote_task = `true` | `false`
+- data_inputs = a key defined in `data_set`
 - decode_prediction:
   - name: e.g.`"logits_to_index"`, name of decode_y_ func.
     > TODO: allow multiple decode_y_ funcs.

@@ -1,0 +1,19 @@
+{
+  "description": "Global config of the application",
+  "web": {
+    "description": "Note: 1.SocketIO doesn't support HTTPS well 2.2020 is Mice year in China calendar",
+    "cloud_vender": "",
+    "local_ip": "127.0.0.1",
+    "local_port": "2020",
+    "use_https": false,
+    "certfile_path": "",
+    "keyfile_path": "",
+    "use_socket": false,
+    "upload_folder": "data/_uploads",
+    "cache_expiry_seconds": 6000
+  },
+  "devices": {
+    "description": "Note: 1.SingleCore CPU not support multi-thread well",
+    "single_core": false
+  }
+}

@@ -1,12 +1,10 @@
 import enum
 import os.path as osp
-from sklearn.utils import deprecated
 
 __all__ = [
-    "CommandMode",
-    "Config",
     "__abspath__",
     "Path",
+    "Config",
 ]
 
 class classproperty(property):
@@ -24,7 +22,7 @@ class Path:
     ExperimentsFolderAbs = __abspath__('experiments')
     DataFolderAbs = __abspath__('data')  # only for small dataset that resides inside of the project
     ModelsFolderAbs = __abspath__('models')
-    UploadFolderAbs = __abspath__('data/_uploads')
+    DeployConfigAbs = __abspath__('config_deploy.json')
 
     @classproperty
     def ExperimentFolderAbs(self=None) -> str:
@@ -51,7 +49,7 @@ class Config:
                            '_test_/embedding_distance',  # 2020/03/24
                            'tripletloss/inceptresv2_tlearn33c+tripletloss+miniset(138+3,gray)'  # 2020/03/23
                            ]
-    _ExperimentName = __ExperimentNames__[0]
+    _ExperimentName = __ExperimentNames__[2]  # <== select an active experiment
 
     @classproperty  # IMPROVE: use class property
     def ExperimentName(self=None) -> str: return Config._ExperimentName
@@ -64,19 +62,20 @@ class Config:
 
 
 # --- Obsolete Code ---------------------------------------------------------
-@deprecated("--command_mode CLI argument is obsolete, use --experiment instead")
-class CommandMode(enum.Enum):
-    @classmethod
-    def hint_string(cls, sep=', '):
-        hints = []
-        for item in list(cls):
-            hints.append('{}: {}'.format(item.value, item.name))
-        return sep.join(hints)
-
-    Test = 0
-    RetrainModel = 1  # ref:model_retrain.py
-    UpdateFeatLib = 2
-    FeatComp = 3  # Model.Predict(X)=>y_ + Math.MinDistance(y_, y[])
+# # ref: sklearn.utils :: deprecated
+# @deprecated("--command_mode CLI argument is obsolete, use --experiment instead")
+# class CommandMode(enum.Enum):
+#     @classmethod
+#     def hint_string(cls, sep=', '):
+#         hints = []
+#         for item in list(cls):
+#             hints.append('{}: {}'.format(item.value, item.name))
+#         return sep.join(hints)
+#
+#     Test = 0
+#     RetrainModel = 1  # ref:model_retrain.py
+#     UpdateFeatLib = 2
+#     FeatComp = 3  # Model.Predict(X)=>y_ + Math.MinDistance(y_, y[])
 
 
 # class Config:

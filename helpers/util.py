@@ -8,9 +8,8 @@ import os
 import os.path as osp
 import sys
 import time
-from queue import Queue
-from threading import Thread
 import functools
+from contextlib import ContextDecorator
 # ABCs (from collections.abc), Super-special typing primitives, Concrete collection types
 from typing import Iterable, Iterator, Mapping, Hashable, Sequence, Sized, Awaitable, Collection, ContextManager, \
     Any, Optional, Callable, ClassVar, Type, TypeVar, Tuple, \
@@ -26,12 +25,16 @@ __all__ = [
     "ERROR",
     "whereami",
     "dump_iterable_data",
+    "track_entry_and_exit",
     # -- Structure Design -------------
     "singleton",
     "classproperty",
     # -- Input :: Config --------------
     "Params",
     "ConfigSerializer",
+    # -- Input :: User Interactive --------------
+    "adjust_interrupt_handlers",
+    "ensure_web_app",
     # -- File Operations --------------
     "ensure_dir_exists",
     "tmp_filename_by_time",
@@ -43,17 +46,28 @@ __all__ = [
     "show_image_mats",
     "load_image_mats",
     "save_image_mats",
+    "coro_show_image_mat",
+    "coro_show_image_mats",
+    "async_show_image_mat",
+    "async_show_image_mats",
     "cache_object",
     "path_possibly_formatted",
     "path_regulate_to_slash",
     "is_abs_path",
     "walk",
     # -- Data Process ---------------
+    "urlsafe_uuid",
+    "dump_to_json",
     "safe_get_len",
+    "safe_slice",
+    "dict_compare",
+    "dict_left_join",
+    "dict_right_join",
+    "dict_update",
     "indices_in_vocabulary_list",
     "safe_get",
+    "hasmethod",
     # -- Thread Process ---------------
-    "asynchronous",
     "print_time_consumed",
 ]
 
@@ -105,21 +119,22 @@ def init_logging(log_level: VerbosityLevel = VerbosityLevel.INFO, log_path=None,
     __logger__.info("Logging initialized.")
 
 # origins: logging module
-def whereami(filename_only=True):
+def whereami(back=1, filename_only=True, return_dict=False):
     """
-    :return: filepath, lineno, funcname, stack_info(not implemented)
+    :return: filepath, lineno, funcname, stack_info(not implemented) of caller
     """
     f = sys._getframe(0)
     rv = "(unknown file)", 0, "(unknown function)", None
     while hasattr(f, "f_code"):
         if f.f_code.co_filename == __file__:
-            f = f.f_back
+            for i in range(back):
+                f = f.f_back
             rv = (os.path.basename(f.f_code.co_filename) if filename_only else f.f_code.co_filename,
                   f.f_lineno, f.f_code.co_name, None)
             break
         else:
             f = f.f_back
-    return rv
+    return rv if not return_dict else {'file': rv[0], 'line_num': rv[1], 'func_name': rv[2], 'stack_info': rv[3]}
 
 # IMPROVE: consider using pprint lib
 def dump_iterable_data(data: Any, indent=1):
@@ -172,6 +187,66 @@ def WARN(msg, tag=None):
 
 def ERROR(msg, tag=None):
     __log__(msg, VerbosityLevel.ERROR, tag=tag)
+
+
+# NOTE: hack ContextDecorator to support both regular and async functions
+# class track_entry_and_exit(ContextDecorator):
+class track_entry_and_exit:
+    """
+    Debug level logging helper. Support both regular and async functions:
+    @track_entry_and_exit.coro()
+    async def activity():
+        print('Some time consuming activity goes here')
+        load_widget()
+    @track_entry_and_exit()
+    def activity():
+        print('Some time consuming activity goes here')
+        load_widget()
+    """
+
+    class coro:
+        def _recreate_cm(self, func):
+            self.func_name = func.__name__
+            return self
+
+        def __call__(self, func):
+            """
+            :param func: an async(coroutine) function
+            :return:
+            """
+            @functools.wraps(func)
+            async def inner(*args, **kwargs):
+                with self._recreate_cm(func=func):
+                    return await func(*args, **kwargs)
+            return inner
+
+        def __enter__(self):
+            DEBUG(f'Async Entering: {self.func_name}')
+
+        def __exit__(self, exc_type, exc, exc_tb):
+            DEBUG(f'Async Exiting: {self.func_name}')
+
+
+    def _recreate_cm(self, func):
+        self.func_name = func.__name__
+        return self
+
+    def __call__(self, func):
+        @functools.wraps(func)
+        def inner(*args, **kwargs):
+            with self._recreate_cm(func=func):
+                return func(*args, **kwargs)
+        return inner
+
+    # def __init__(self, func_name=None):
+    #     self.func_name = whereami(back=3, return_dict=True)['func_name'] if func_name is None else func_name
+
+    def __enter__(self):
+        DEBUG(f'Entering: {self.func_name}')
+
+    def __exit__(self, exc_type, exc, exc_tb):
+        DEBUG(f'Exiting: {self.func_name}')
+
 
 
 # -----------------------------------------------------#
@@ -230,6 +305,7 @@ class classproperty(property):
 # -----------------------------------------------------#
 # -- Input :: Config --------------
 def _save_dict_to_json(dict_, json_path):
+    # TODO: not completely implemented
     with open(json_path, 'w', encoding='utf-8') as f:
         # We need to convert the values to float for json (it doesn't accept np.array, np.float, )
         dict_ = {k: float(v) for k, v in dict_.items()}
@@ -242,22 +318,28 @@ class Params(dict):
 
     def __init__(self, seq=None, **kwargs):
         if seq is not None:
-            super(Params, self).__init__(seq)
+            super(self.__class__, self).__init__(seq)
         else:
-            super(Params, self).__init__(**kwargs)
-        if not Params.__class_initialized__:
-            Params.__class_initialized__ = True
-            Params._key_missed_value = Params({})  # sentinel, allows check validity by `has_attr()`
+            super(self.__class__, self).__init__(**kwargs)
+        if not self.__class__.__class_initialized__:
+            self.__class__.__class_initialized__ = True
+            self.__class__._key_missed_value = Params({})  # sentinel, allows check validity by `is_blank()`
 
     def __getattr__(self, attr_name):
         # NOTE: only called when has not found the attribute
         return self[attr_name]
 
+    def __setattr__(self, attr_name, attr_value):
+        self[attr_name] = attr_value
+
+    def __str__(self):
+        return '' if len(self) == 0 else super(self.__class__, self).__str__()
+
     def __missing__(self, key):
         # NOTE: if Params[key] missed, returns this value instead of raising KeyError (or IndexError)
         return Params._key_missed_value
 
-    def has_attr(self):
+    def is_blank(self):
         """
         NOTE: only use this checking a :class:`Params` node. For leaf nodes (str, list)
           :func:`__len__()` or `isinstance(node, type)` is suggested
@@ -266,8 +348,8 @@ class Params(dict):
 
     def get(self, key, *args):
         # deprecated: return super(Params, self).get(key, default if default is not None else {})
-        default = args[0] if len(args)>0 else Params._key_missed_value
-        return super(Params, self).get(key, default)
+        default = args[0] if len(args) > 0 else Params._key_missed_value
+        return super(self.__class__, self).get(key, default)
 
     def left_join(self, other: dict, key_map: dict = None, **others):
         """
@@ -281,10 +363,41 @@ class Params(dict):
                 key_right = key_map.get(key)  # key translation
             else:
                 key_right = key
-            if key_right in other:
-                self.__setitem__(key, other.get(key_right))
-            if key_right in others:
+            if key in others:
+                self.__setitem__(key, others.get(key))
+            elif key_right in others:
                 self.__setitem__(key, others.get(key_right))
+            elif key in other:
+                self.__setitem__(key, other.get(key))
+            elif key_right in other:
+                self.__setitem__(key, other.get(key_right))
+        return self
+
+    def right_join(self, other: dict, key_map: dict = None, **others):
+        """
+        Similar to `update_to()` except that only keys defined in both sides
+        will have their values updated. Those not defined in right side will be deleted.
+        :param other:
+        :param key_map: dict of key_left -> key_right, for key translation
+        """
+        to_delete = []
+        for key in self.keys():
+            if key_map is not None and key in key_map:
+                key_right = key_map.get(key)  # key translation
+            else:
+                key_right = key
+            if key in others:
+                self.__setitem__(key, others.get(key))
+            elif key_right in others:
+                self.__setitem__(key, others.get(key_right))
+            elif key in other:
+                self.__setitem__(key, other.get(key))
+            elif key_right in other:
+                self.__setitem__(key, other.get(key_right))
+            else:
+                to_delete.append(key)
+        for key in to_delete:
+            self.__delitem__(key)
         return self
 
     def update(self, other: dict, key_map: dict = None, **others):
@@ -299,7 +412,7 @@ class Params(dict):
                 if key_right in others:
                     others.__setitem__(key_left, others.get(key_right))
                     del others[key_right]
-        return super(Params, self).update(other, **others)  # always return `None` as dict's behavior
+        return super(self.__class__, self).update(other, **others)  # always return `None` as dict's behavior
 
     def update_to(self, other: dict, key_map: dict = None, **others):
         """
@@ -356,7 +469,7 @@ class ConfigSerializer:
 
     @staticmethod
     def load(json_path) -> Params:
-        dict_to = None
+        dict_to = Params()
         with open(json_path, encoding='utf-8') as f:
             # TODO: use parse_constant param to parse 'None' (used in tf.Shape)
             dict_from = json.load(f, parse_constant=None)
@@ -366,67 +479,59 @@ class ConfigSerializer:
 
 
 # -----------------------------------------------------#
+# -- Input :: User Interactive ---------------
+# NOTE: If you have imported Scipy or alike, Interrupt Handler might have been injected.
+def adjust_interrupt_handlers():
+    import os
+    import imp
+    import ctypes
+    import _thread
+    import win32api
+
+    # Load the DLL manually to ensure its handler gets
+    # set before our handler.
+    basepath = imp.find_module('numpy')[1]
+
+    def try_to_load(dll_path):
+        try:
+            ctypes.CDLL(dll_path)
+        except OSError as e:
+            pass
+    try_to_load(os.path.join(basepath, 'core', 'libmmd.dll'))
+    try_to_load(os.path.join(basepath, 'core', 'libifcoremd.dll'))
+
+    # Now set our handler for CTRL_C_EVENT. Other control event
+    # types will chain to the next handler.
+    def handler(dwCtrlType, hook_sigint=_thread.interrupt_main):
+        if dwCtrlType == 0:  # CTRL_C_EVENT
+            hook_sigint()
+            return 1  # don't chain to the next handler
+        return 0  # chain to the next handler
+
+    win32api.SetConsoleCtrlHandler(handler, 1)
+
+def ensure_web_app():
+    from config import Path, __abspath__
+    import os.path as osp
+    config_deploy = ConfigSerializer.load(Path.DeployConfigAbs)
+    params_webapp = Params(upload_folder=None).right_join(config_deploy.web)
+    # NOTE: relative path should relate to project root, not webapp's
+    if not osp.isabs(params_webapp.upload_folder):
+        params_webapp.upload_folder = __abspath__(params_webapp.upload_folder)
+
+    from web import get_webapp
+    webapp = get_webapp(**params_webapp)
+
+    params_webapp_run = Params(host="127.0.0.1", port="2020", ssl_context=None) \
+        .left_join(config_deploy.web, {"host": "local_ip", "port": "local_port"})
+    if config_deploy.web.use_https:
+        params_webapp_run.ssl_context = (config_deploy.web.certfile_path, config_deploy.web.keyfile_path)
+    webapp.async_run(**params_webapp_run)
+    return webapp
+
+
+# -----------------------------------------------------#
 # -- Thread Process ---------------
-# decorator
-# NOTE: experimental. use AsyncTask or asyncio lib (await, asyncio.create_task(), non-blocking)
-class asynchronous(object):   # consider use AsyncTask instead (support process feedback)
-    """Sample usage:
-    import time
-    @asynchronous
-    def long_process(num):
-        time.sleep(10)
-        return num * num
-
-    async_result = long_process.start(12)
-    for i in range(20):
-        print(i)
-        time.sleep(1)
-        if async_result.is_done():
-            print("async_result {0}".format(async_result.get_result()))
-
-    async_result2 = long_process.start(13)
-    try:
-        print("async_result2 {0}".format(async_result2.get_result()))
-    except asynchronous.NotYetDoneException as ex:
-        print(ex.message)
-    """
-
-    def __init__(self, func):
-        self.func = func
-        self.result_queue = None
-
-        def threaded(*args, **kwargs):
-            self.result_queue.put(self.func(*args, **kwargs))
-
-        self.threaded = threaded
-
-    def __call__(self, *args, **kwargs):
-        return self.func(*args, **kwargs)
-
-    def start(self, *args, **kwargs):
-        self.result_queue = Queue()
-        # IMPROVE: to avoid GIL, use Process (and multi-core CPU) to mimic multi-thread
-        thread = Thread(target=self.threaded, args=args, kwargs=kwargs)
-        thread.start()
-        return asynchronous.AsyncResult(self.result_queue, thread)
-
-    class NotYetDoneException(Exception):
-        def __init__(self, message):
-            self.message = message
-
-    class AsyncResult:
-        def __init__(self, result_queue, thread):
-            self.result_queue = result_queue
-            self.thread = thread
-
-        def is_done(self):
-            return not self.thread.is_alive()
-
-        def get_result(self):
-            if not self.is_done():
-                raise asynchronous.NotYetDoneException('the call has not yet completed its task')
-            return self.result_queue.get()
-
 @contextlib.contextmanager
 def print_time_consumed(format_: str = "[INFO] time consumed: {:.5f}s", file=sys.stdout):
     """
@@ -450,13 +555,7 @@ def tmp_filename_by_time(file_ext=None):
     return time.strftime("%Y%m%d_%H%M%S", time.localtime(time.time())) + f".{file_ext}" if file_ext is not None else ""
 
 def tmp_filename_by_uuid(file_ext=None, method="uuid4"):
-    import uuid
-    if method == "uuid1":
-        return str(uuid.uuid1()) + ".{}".format(file_ext) if file_ext is not None else ""
-    elif method == "uuid4":
-        return str(uuid.uuid4()) + ".{}".format(file_ext) if file_ext is not None else ""
-    else:
-        raise ValueError(f"Unsupported method: {method}")
+    return urlsafe_uuid(method) + ".{}".format(file_ext) if file_ext is not None else ""
 
 def get_new_name_if_exists(path, method="auto_inc", format_=" ({:d})", max_auto_inc=99999):
     path_splitted = osp.splitext(path)
@@ -469,22 +568,41 @@ def get_new_name_if_exists(path, method="auto_inc", format_=" ({:d})", max_auto_
         raise SystemError(f"Auto-incremental postfix exceeds its limit: {max_auto_inc}")
     return path_test
 
-def show_image_mat(image_mat, text=None, title=None, cell_size: tuple = None, block=None):
+def show_image_mat(image_mat, text=None, title=None, cell_size: tuple = None, block=None, onlysave_path=None):
+    if any([type(image_mat).__name__.endswith(_) for _ in ('Tensor', 'Dataset')]):
+        from helpers.tf_helper import tf_obj_to_np_array
+        image_mat = tf_obj_to_np_array(image_mat)
     from helpers.plt_helper import plot_image_mat as plt_show_image_mat
-    return plt_show_image_mat(image_mat, text, title, cell_size, block)
+    return plt_show_image_mat(image_mat, text, title, cell_size, block, onlysave_path)
 
 def load_image_mat(image_path, format_=None):
     from helpers.plt_helper import load_image_mat as plt_load_image_mat
     return plt_load_image_mat(image_path, format_)
 
 def save_image_mat(image_mat, image_path, **kwargs):
+    if any([type(image_mat).__name__.endswith(_) for _ in ('Tensor', 'Dataset')]):
+        from helpers.tf_helper import tf_obj_to_np_array
+        image_mat = tf_obj_to_np_array(image_mat)
     from helpers.plt_helper import save_image_mat as plt_save_image_mat
     plt_save_image_mat(image_mat, image_path, **kwargs)
 
 def show_image_mats(image_mats, texts=None, title=None, num_rows=None, num_cols=None, cell_size: tuple = None,
-                    block=None):
+                    block=None, onlysave_path=None):
+    """
+    :param image_mats: tf.Tensor or np.ndarray, in shape of [b,h,w,c]. Or enumerable of such elements.
+    :param texts:
+    :param title:
+    :param num_rows:
+    :param num_cols:
+    :param cell_size:
+    :param block:
+    :param onlysave_path: if specified, save the figure and do not show
+    """
+    if any([type(image_mats).__name__.endswith(_) for _ in ('Tensor', 'Dataset')]):
+        from helpers.tf_helper import tf_obj_to_np_array
+        image_mats = tf_obj_to_np_array(image_mats)
     from helpers.plt_helper import plot_images as plt_show_image_mats
-    return plt_show_image_mats(image_mats, texts, title, num_rows, num_cols, cell_size, block)
+    return plt_show_image_mats(image_mats, texts, title, num_rows, num_cols, cell_size, block, onlysave_path)
 
 def load_image_mats(root_path, format_=None):
     import glob
@@ -500,15 +618,15 @@ def load_image_mats(root_path, format_=None):
 
 def save_image_mats(image_mats, save_paths: list = None, save_dir: str = None, format_=None, **kwargs):
     """
-    :param image_mats:
+    :param image_mats: tf.Tensor or np.ndarray, in shape of [b,h,w,c]. Or enumerable of such elements.
     :param save_paths: If save_dir is also valid, save_paths will be used as paths relative to save_dir
     :param save_dir:
     :param format_:
     :param kwargs:
     :return:
     """
-    if save_paths is not None and safe_get_len(image_mats) != safe_get_len(save_paths):
-        raise ValueError("Size of image_mats and save_paths must be same.")
+    # if save_paths is not None and safe_get_len(image_mats) != safe_get_len(save_paths):
+    #     raise ValueError("Size of image_mats and save_paths must be same.")
     if save_paths is None and save_dir is None:
         raise ValueError("Both save_paths and save_dir cannot be omitted.")
     if save_dir is not None:
@@ -522,9 +640,114 @@ def save_image_mats(image_mats, save_paths: list = None, save_dir: str = None, f
         else:
             for i in range(safe_get_len(image_mats)):
                 save_paths[i] = osp.join(save_dir, save_paths[i])
+    len_save_paths = safe_get_len(save_paths)
     for idx, image_mat in enumerate(image_mats):
+        if idx >= len_save_paths:
+            raise ValueError(f"Size of save_paths(={len_save_paths}) is less than image_mats.")
+        if hasmethod(image_mat, 'numpy'):
+            image_mat = image_mat.numpy()
         save_path = get_new_name_if_exists(save_paths[idx])  # no overwrites
         save_image_mat(image_mat, save_path, **kwargs)
+
+@track_entry_and_exit.coro()
+async def coro_show_image_mat(image_mat, text=None, title=None,
+                              cell_size: tuple = None, block=False, image_name=None,
+                              cbs=None, task_id=None):
+    """
+    :param image_name: used as callback arguments
+    :param cbs: a tuple in order of (on_done, on_succeeded, on_failed, on_progress).
+      only `on_done` is dispatched.
+    :return: no return value
+    """
+    # NOTE: matplot backend is single-threaded, and can only be accessed from its host thread.
+    import matplotlib.pyplot as plt
+
+    import asyncio
+    from async_ import amend_blank_cbs
+    on_done, on_succeeded, on_failed, on_progress = amend_blank_cbs(cbs)
+    ret = {'image_name': image_name}
+    try:
+        fig = show_image_mat(image_mat, text=text, title=title, cell_size=cell_size, block=block)
+    except Exception as e:
+        ret.update({'error': e})
+        on_done(ret)
+        return
+    if not block:
+        try:
+            async def coro_pause(delay_s):
+                plt.pause(delay_s)
+                await asyncio.sleep(0.1)  # give control to other tasks in the same loop
+
+            while True:   # IMPROVE: figure on_close() => manager.destroy(), but cannot hook to it.
+                fig.show()
+                await coro_pause(1)
+        except Exception as e:  # for TKinter backend, a _tkinter.TclError
+            DEBUG(f'[coro_show_image_mats] show loop ended: {e}')
+    plt.close(fig)
+    on_done(ret)
+
+@track_entry_and_exit.coro()
+async def coro_show_image_mats(image_mats, texts=None, title=None, num_rows=None, num_cols=None,
+                               cell_size: tuple = None, block=False, image_names=None,
+                               cbs=None, task_id=None):
+    """
+    :param image_names: used as callback arguments
+    :param cbs: a tuple in order of (on_done, on_succeeded, on_failed, on_progress).
+      only `on_done` is dispatched.
+    :return: no return value
+    """
+    # NOTE: matplot backend is single-threaded, and can only be accessed from its host thread.
+    import matplotlib.pyplot as plt
+
+    import asyncio
+    from async_ import amend_blank_cbs
+    on_done, on_succeeded, on_failed, on_progress = amend_blank_cbs(cbs)
+    ret = {'image_names': image_names}
+    try:
+        fig = show_image_mats(image_mats, texts=texts, title=title, num_rows=num_rows, num_cols=num_cols,
+                              cell_size=cell_size, block=block)
+    except Exception as e:
+        ret.update({'error': e})
+        on_done(ret)
+        return
+    if not block:
+        try:
+            async def coro_pause(delay_s):
+                plt.pause(delay_s)
+                await asyncio.sleep(0.1)  # give control to other tasks in the same loop
+
+            while True:   # IMPROVE: figure on_close() => manager.destroy(), but cannot hook to it.
+                fig.show()
+                await coro_pause(1)
+        except Exception as e:  # for TKinter backend, a _tkinter.TclError
+            DEBUG(f'[coro_show_image_mats] show loop ended: {e}')
+    plt.close(fig)
+    on_done(ret)
+
+
+def async_show_image_mat(image_mat, text=None, title=None, cell_size: tuple = None, image_name=None):
+    """
+    :return: an async task object
+    """
+    from async_ import AsyncLoop, AsyncManager
+    ui_loop = AsyncManager.get_loop(AsyncLoop.UIThread)
+    coro = coro_show_image_mat(image_mat, text=text, title=title,
+                               cell_size=cell_size, block=False, image_name=image_name)
+    task = AsyncManager.create_task(coro, loop=ui_loop)
+    return AsyncManager.run_task(task, loop=ui_loop)  # possibly only one task in this batch
+
+def async_show_image_mats(image_mats, texts=None, title=None, num_rows=None, num_cols=None,
+                          cell_size: tuple = None, image_names=None):
+    """
+    :return: an async task object
+    """
+    from async_ import AsyncLoop, AsyncManager
+    ui_loop = AsyncManager.get_loop(AsyncLoop.UIThread)
+    coro = coro_show_image_mats(image_mats, texts=texts, title=title, num_rows=num_rows, num_cols=num_cols,
+                                cell_size=cell_size, block=False, image_names=image_names)
+    task = AsyncManager.create_task(coro, loop=ui_loop)
+    return AsyncManager.run_task(task, loop=ui_loop)  # possibly only one task in this batch
+
 
 def cache_object(src, dest_dir, src_type="Path", suppress_exception=True, **kwargs):
     """
@@ -618,6 +841,24 @@ def walk(root: str, depth: int = None) -> [{str, list, list, int}]:
 
 # -----------------------------------------------------#
 # -- Data Process ---------------
+def urlsafe_uuid(method='uuid4'):
+    """
+    :return: 24 bytes unique string generated by uuid module
+    """
+    import uuid
+    import base64
+    uuid_func = getattr(uuid, method, uuid.uuid4)
+    return str(base64.urlsafe_b64encode(uuid_func().bytes), 'utf-8').strip(r'=+')
+
+def dump_to_json(obj, key_if_not_dict=None):
+    if hasattr(obj, '__dict__'):
+        return json.dumps(obj.__dict__)
+    elif isinstance(obj, dict):
+        return json.dumps(obj)
+    else:
+        key = key_if_not_dict or 'data'
+        return f'{{"{key}": {obj}}}'
+
 def safe_get_len(obj, default_value=-1):
     len_ = default_value
     if hasattr(obj, "__len__"):
@@ -626,6 +867,118 @@ def safe_get_len(obj, default_value=-1):
         len_ = obj.shape[0]
     return len_
     # raise TypeError(f"Cannot get length info from type: {type(obj)}")
+
+def safe_slice(obj: Sequence, start=0, end=0, step=None):
+    """
+    IMPROVE: implement step for `tf.data.Dataset` obj
+    """
+    if obj is None:
+        return None
+    if hasattr(obj, '__getitem__'):
+        return obj[start:end:step]
+    if hasattr(obj, 'take') and hasattr(obj, 'skip'):
+        # duck type of tf.data.Dataset, with `take()` and `skip()` method
+        if start > 0:
+            obj = obj.skip(start)
+        if end > start:
+            obj = obj.take(end - start)
+        return obj
+    raise TypeError(f'Unexpected type to safe_slice: {type(obj).__name__}')
+
+def dict_compare(before, after):
+    # IMPROVE: removed
+    new = {}
+    changed = {}
+    for k in after:
+        v = after[k]
+        if k not in before:
+            new[k] = after[k]
+        elif v != before[k]:
+            changed[k] = v
+    return new, changed
+
+def dict_left_join(self, other: dict, key_map: dict = None, **others):
+    """
+    Similar to `update_to()` except that only keys defined in left sides (this instance)
+    will have their values updated. No extra key-value pairs will be appended.
+    :param self:
+    :param other:
+    :param key_map: dict of key_left -> key_right, for key translation
+    """
+    for key in self.keys():
+        if key_map is not None and key in key_map:
+            key_right = key_map.get(key)  # key translation
+        else:
+            key_right = key
+        if key in others:
+            self.__setitem__(key, others.get(key))
+        elif key_right in others:
+            self.__setitem__(key, others.get(key_right))
+        elif key in other:
+            self.__setitem__(key, other.get(key))
+        elif key_right in other:
+            self.__setitem__(key, other.get(key_right))
+    return self
+
+def dict_right_join(self, other: dict, key_map: dict = None, **others):
+    """
+    Similar to `update_to()` except that only keys defined in both sides
+    will have their values updated. Those not defined in right side will be deleted.
+    :param self:
+    :param other:
+    :param key_map: dict of key_left -> key_right, for key translation
+    """
+    to_delete = []
+    for key in self.keys():
+        if key_map is not None and key in key_map:
+            key_right = key_map.get(key)  # key translation
+        else:
+            key_right = key
+        if key in others:
+            self.__setitem__(key, others.get(key))
+        elif key_right in others:
+            self.__setitem__(key, others.get(key_right))
+        elif key in other:
+            self.__setitem__(key, other.get(key))
+        elif key_right in other:
+            self.__setitem__(key, other.get(key_right))
+        else:
+            to_delete.append(key)
+    for key in to_delete:
+        self.__delitem__(key)
+    return self
+
+def dict_update(self, other: dict, key_map: dict = None, **others):
+    # NOTE: dict.update() always returns `None`, so should not be used in assignment
+    if key_map is not None:
+        other = other.copy()
+        others = others.copy()
+        for key_left, key_right in key_map.items():
+            if key_right in other:
+                other.__setitem__(key_left, other.get(key_right))
+                del other[key_right]
+            if key_right in others:
+                others.__setitem__(key_left, others.get(key_right))
+                del others[key_right]
+    return self.update(other, **others)  # always return `None` as dict's behavior
+
+def dict_fromkeys(self, keys: Iterable[str], key_map: Dict[str, str] = None) -> Dict[str, Any]:
+    """
+    Create a new Params object with keys specified in `keys` (or translate to its alias defined
+    in `key_map` if available), and values as mapped to these keys in this instance (if available)
+    :param keys:
+    :param key_map:
+    :return: a new Params instance
+    """
+    result = {}
+    for key in keys:
+        if key_map is not None and key in key_map:
+            key = key_map.get(key)  # key translation
+        if key not in self.keys():
+            continue
+        result.__setitem__(key, self.get(key))
+    return result
+
 
 def indices_in_vocabulary_list(values: list, vocabulary: list, default_value=-1):
     """
@@ -655,3 +1008,6 @@ def safe_get(collection: Any, key, default_value=None):
     except RuntimeError:
         pass
     return default_value
+
+def hasmethod(obj, name):
+    return hasattr(obj, name) and callable(obj.__getattribute__(name))
