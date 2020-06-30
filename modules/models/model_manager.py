@@ -10,7 +10,7 @@ import tensorflow as tf
 #     tf1.disable_v2_behavior()
 
 from helpers.util import DEBUG, INFO, WARN, ERROR, Params, safe_get_len, ensure_dir_exists, path_possibly_formatted, \
-    show_image_mats, save_image_mats
+    show_image_mats, save_image_mats, safe_slice
 from helpers.tf_helper import preload_gpu_devices
 
 __all__ = [
@@ -36,10 +36,10 @@ class _ModelSignature(enum.Enum):
     TF_ImportGraphDef = ("tf.import_graph_def", "PB", "for TF2.x use tf.graph_util.import_graph_def")  # Protocol Buffer File
     TFTrain_LatestCKPT = ("tf.train.latest_checkpoint", "CKPT")
 
-    def __init__(self, signature: str, formats, comment=None):
+    def __init__(self, signature: str, formats, memo=None):
         self.signature = signature
         self.formats = formats if isinstance(formats, list) else [formats]
-        self.__doc__ = comment
+        self.__doc__ = memo
 
 
 class ModelManager:
@@ -184,7 +184,7 @@ class ModelManager:
             # 2.prepare callbacks
             callbacks = []
             # callback :: save medium CKPT
-            if params_train.checkpoint.save_weights.has_attr() and ckpt_dir is not None:
+            if params_train.checkpoint.save_weights.is_blank() and ckpt_dir is not None:
                 ckpt_path_to_save = osp.join(ckpt_dir, "ckpt.{epoch:02d}-{val_loss:.2f}")
                 # NOTE: if save_freq is not equal to 'epoch', which means num of steps, it's will be less reliable
                 _params = Params(save_freq='epoch').left_join(params_train.checkpoint.save_weights,
@@ -195,7 +195,7 @@ class ModelManager:
                                                                verbose=1, **_params)
                 callbacks.append(_callback)
             # callback :: early stop
-            if params_train.early_stop.has_attr():
+            if params_train.early_stop.is_blank():
                 _params = Params(monitor='val_loss', patience=10).left_join(params_train.early_stop)
                 _callback = tf.keras.callbacks.EarlyStopping(**_params)
                 callbacks.append(_callback)
@@ -211,7 +211,7 @@ class ModelManager:
                                 callbacks=callbacks if len(callbacks) > 0 else None)
 
             # 4.save checkpiont at last
-            if params_train.save_model.has_attr() and ckpt_dir is not None:
+            if params_train.save_model.is_blank() and ckpt_dir is not None:
                 _params = Params(format="SavedModel").left_join(params_train.save_model)
                 _ext = "tf" if _params.format != "HDF5" else "h5"
                 ckpt_path_to_save = osp.join(ckpt_dir, f"model_trained.{_ext}")
@@ -332,7 +332,7 @@ class ModelManager:
                 INFO(f"Number of mismatch between prediction and truth: {len(p_show)}")
             if params_predict.show_result.get('top_k', None) is not None:
                 top_k = params_predict.show_result.top_k
-                x_show, p_show, y_show = x_show[:top_k], p_show[:top_k], y_show[:top_k]
+                x_show, p_show, y_show = (safe_slice(_, end=top_k) for _ in (x_show, p_show, y_show))
             if len(p_show) > 0:
                 dumps = []
                 for i, p in enumerate(p_show):
@@ -340,20 +340,39 @@ class ModelManager:
                         dumps.append(f"{p}")
                     else:
                         dumps.append(f"({p} vs {y_show[i]})")
-                need_to_show_or_save = (params_predict.show_result.plotter.__len__() > 0) \
-                                       or (params_predict.show_result.save_path.__len__() > 0)
-                if need_to_show_or_save:
+                need_to_show = params_predict.show_result.plotter.__len__() > 0
+                need_to_save = params_predict.show_result.save_path.__len__() > 0
+                only_save = params_predict.show_result.only_save
+                if need_to_show or need_to_save:
+                    def denormalize(x):
+                        x = x * 255
+                        if hasattr(x, 'astype'):  # np.ndarray
+                            return x.astype(np.int32)
+                        else:
+                            return tf.cast(x, tf.int32)  # tf.Tensor
+                    # IMPROVE: use signature to match normalize and `un-normalize` routines
                     if hasattr(x_show, "dtype") and x_show.dtype.name.startswith('float'):
-                        # IMPROVE: use signature to match normalize and `un-normalize` routines
-                        x_show = x_show * 255
-                        x_show.astype(np.int32)
-                if params_predict.show_result.plotter == "matplot":
-                    show_image_mats(x_show, dumps)
-                else:
-                    INFO(f"Predictions{'(only diff)' if 'differences' in vars() else ''}: " + ", ".join(dumps))
-                if params_predict.show_result.save_path.__len__() > 0:
+                        x_show = denormalize(x_show)
+                    elif hasattr(x_show, "element_spec") and \
+                        hasattr(x_show.element_spec, "dtype") and x_show.element_spec.dtype.name.startswith('float'):
+                        x_show = x_show.map(denormalize)
+                save_dir, save_paths = None, None
+                if need_to_save:
                     save_dir = path_possibly_formatted(params_predict.show_result.save_path)
                     save_paths = [osp.join(save_dir, _+'.jpg') for _ in dumps]
+                if params_predict.show_result.plotter == "matplot":
+                    onlysave_path = None
+                    if only_save:
+                        if need_to_save:
+                            from helpers.util import tmp_filename_by_time
+                            onlysave_path = osp.join(save_dir, tmp_filename_by_time('jpg'))
+                            need_to_save = False
+                        else:
+                            WARN('only_save is true, but save_path is not specified. ignored')
+                    show_image_mats(x_show, texts=dumps, title="Predictions", onlysave_path=onlysave_path)
+                else:
+                    INFO(f"Predictions{'(only diff)' if 'differences' in vars() else ''}: " + ", ".join(dumps))
+                if need_to_save:
                     save_image_mats(x_show, save_paths)
         else:
             INFO(f"Predictions(top): {predictions[0]}")

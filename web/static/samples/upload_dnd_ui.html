@@ -36,12 +36,10 @@ function ajaxRequest(method, url, request, callback) {
 <body>
 <h2>Input of Remote Tasks:</h2>
 <div>
-	<div id="message">AAA
+	<div id="message" class="hidden">
 	</div>
 	<div id="holder">
 		<p>Drop Images Here.</p>
-	</div>
-	<div>
 		<p id="upload" class="hidden"><label>Drag & drop not supported, but you can still upload via this input field:<br><input type="file" name="file"></label></p>
 		<p id="test_filereader">File API & FileReader API not supported</p>
 		<p id="test_formdata">XHR2's FormData is not supported</p>
@@ -117,7 +115,7 @@ function readfiles(files) {
 	clearPreview();
 	for (var i = 0; i < files.length; i++) {
 		if (tests.formdata)
-			formData.append('file', files[i]);
+			formData.append('file', files[i]);  // NOTE: the key must be consistent with server side
 		previewfile(files[i]);
 	}
 
@@ -129,6 +127,7 @@ function readfiles(files) {
 		xhr.onload = function() {
 			progress.value = progress_value.innerHTML = 100;
 			message.innerHTML = this.responseText;  //this.responseXML(.responseType='document'), this.response(else)
+			message.className = '';  //show
 		};
 
 		if (tests.progress) {

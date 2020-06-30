@@ -44,6 +44,17 @@
                 "color_transform": "complementary",
                 "normalize": true
             }
+        },
+        "data_ui_test": {
+            "description": "listen to ui event and accept data",
+            "signature": "ui_web_files",
+            "format": "Paths",
+            "decode_x": {
+                "name": "decode_image_file",
+                "colormode": "grayscale",
+                "color_transform": "complementary",
+                "normalize": true
+            }
         }
     },
     "train": {
@@ -77,11 +88,14 @@
     },
     "predict": {
         "enabled": true,
+        "async_task": true,
+        "data_inputs": "data_ui_test",
         "decode_prediction": {
             "name": "logits_to_index"
         },
         "show_result": {
-            "plotter": "",
+            "plotter": "matplot",
+            "only_save": true,
             "save_path": {
                 "arg_names": ["experiment_path"]
             },

@@ -57,10 +57,11 @@
                 "normalize": true
             }
         },
-        "data_ui_web": {
+        "data_ui_test": {
             "description": "listen to ui event and accept data",
             "signature": "ui_web_files",
             "format": "Paths",
+            "timeout": 0,
             "decode_x": {
                 "name": "decode_image_file",
                 "colormode": "grayscale",
@@ -114,6 +115,7 @@
         }
     },
     "predict": {
-        "enabled": true
+        "enabled": true,
+        "description": "TODO: wait to clone from _test_\tf_1x_to_2x_3"
     }
 }

@@ -1,9 +1,12 @@
 
-from helpers.util import DEBUG, INFO, WARN, ERROR
+from helpers.util import DEBUG, INFO, WARN, ERROR, hasmethod
 
 __all__ = [
     "preload_gpu_devices",
-    "tf_data_to_np_array",
+    "async_preload_gpu_devices",
+    "tf_obj_to_np_array",
+    "is_mapdataset",
+    "image_example",
 ]
 
 __preloaded_gpu___ = False
@@ -29,11 +32,64 @@ def preload_gpu_devices():
     else:
         WARN("No physical GPU available.")
 
-def tf_data_to_np_array(tf_data: object):
+def async_preload_gpu_devices():
+    """
+    Preload in another loop/thread, hopefully call this during waiting for user inputs or other waiting period.
+    """
+    # IMPROVE: needn't to run in an aysncio loop (host in a new thread), to run in a new thread is enough.
+    from async_ import AsyncLoop, AsyncManager
+
+    async def coro_simple_run(): preload_gpu_devices()
+    loop = AsyncManager.get_loop(AsyncLoop.DataProcess)
+    DEBUG(f"[tensorflow] preload gpu devices in another thread...")
+    task = AsyncManager.run_task(coro_simple_run(), loop=loop)
+    return task
+
+
+def tf_obj_to_np_array(tf_obj: object):
     import tensorflow as tf
     import numpy as np
-    assert isinstance(tf_data, tf.data.Dataset)
-    if type(tf_data.element_spec) is tf.TensorSpec:
-        return np.array(list(tf_data.as_numpy_iterator()))
-    else:
-        raise ValueError(f"element_spec must be TensorSpec for conversion whereas {type(tf_data.element_spec)}")
+    # assert isinstance(tf_data, tf.data.Dataset)  # NOTE: MapDataset, or Prefetch/Take/.. is NOT Dataset...
+    if hasattr(tf_obj, 'element_spec') and type(tf_obj.element_spec) is tf.TensorSpec:
+        assert hasmethod(tf_obj, 'as_numpy_iterator'), 'tf dataset must have `as_numpy_iterator` for conversion'
+        return np.array(list(tf_obj.as_numpy_iterator()))
+    elif hasmethod(tf_obj, 'numpy'):
+        return tf_obj.numpy()
+
+
+def is_mapdataset(obj):
+    import tensorflow as tf
+    ds = tf.data.Dataset.from_tensor_slices([''])
+    ds = ds.map(lambda x: x)
+    return type(obj).__name__ == type(ds).__name__
+
+def _bytes_feature(value):
+    """Returns a bytes_list from a string / byte."""
+    import tensorflow as tf
+    if isinstance(value, type(tf.constant(0))):
+        value = value.numpy()   # BytesList won't unpack a string from an EagerTensor.
+    return tf.train.Feature(bytes_list=tf.train.BytesList(value=[value]))
+
+def _float_feature(value):
+    """Returns a float_list from a float / double."""
+    import tensorflow as tf
+    return tf.train.Feature(float_list=tf.train.FloatList(value=[value]))
+
+def _int64_feature(value):
+    """Returns an int64_list from a bool / enum / int / uint."""
+    import tensorflow as tf
+    return tf.train.Feature(int64_list=tf.train.Int64List(value=[value]))
+
+def image_example(image_string, path=None, label=None):
+    import tensorflow as tf
+    image_t = tf.image.decode_jpeg(image_string)
+    feature = {
+        'h': _int64_feature(image_t.shape[0]),
+        'w': _int64_feature(image_t.shape[1]),
+        'c': _int64_feature(image_t.shape[2]),
+        'path': _bytes_feature(tf.constant(path, dtype=tf.dtypes.string)),  # IMPROVE: .encode('utf-8')
+        'label': _int64_feature(label),
+        'image_t': _float_feature(image_t.numpy().flatten()),
+    }
+    return tf.train.Example(features=tf.train.Features(feature=feature))
+

@@ -51,7 +51,7 @@ def _load_as_data_label_lists(root_path, file_exts: set, labels_ordered_in_train
         # TODO: use glob.iglob() and returns Iterators which yield filenames and labels? to deal with Big file set.
         #   tf.data.Dataset.from_generator() can consume yields. Or, tf.data.Dataset+map_fn already load by batch_size?
         #   tf.data.Dataset.list_files() can directly return globed result!
-        data_paths.append(glob.glob(glob_pattern))
+        data_paths.extend(glob.glob(glob_pattern))
     # IMPROVE: use (shuffled_idx=) np.random.permutation(len(data)) instead
     if type(fixed_seed) is int:
         random.seed(fixed_seed)
@@ -135,6 +135,7 @@ def dataset(root_path, file_exts={'jpg', 'jpeg', 'png', 'gif', 'bmp'}, category=
     # resize_w, resize_h = decode_x.get('resize_w', None), decode_x.get('resize_h', None)
     # normalize = decode_x.get('normalize', True)
     # preserve_aspect_ratio = decode_x.get('preserve_aspect_ratio', True)
+    # TODO: after support arbitrary image format in `decode_tf`, change default encoding to `None`
     params_decode = Params(encoding='jpg', colormode=None, reshape=None, preserve_aspect_ratio=True,
                            color_transform=None, normalize=True).left_join(decode_x)
 
@@ -145,7 +146,7 @@ def dataset(root_path, file_exts={'jpg', 'jpeg', 'png', 'gif', 'bmp'}, category=
         path_t = tf.strings.join([root_path_t, folder_name_t, file_name_t], '/')
         # Updating: consider use **decode_x in map_func
         # return decode_tf.decode_image_file(
-        #             path_t, encoding='jpg', colormode=colormode,
+        #             path_t, encoding=None, colormode=colormode,
         #             resize_w=resize_w, resize_h=resize_h,
         #             normalize=normalize, preserve_aspect_ratio=preserve_aspect_ratio
         # )
