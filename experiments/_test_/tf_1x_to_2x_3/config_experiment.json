@@ -14,8 +14,8 @@
             "signature": "keras.models.load_model",
             "format": "SavedModelFile",
             "path": {
-                "format": "/tmp/ckpt/{}/model_trained.tf",
-                "arg_names": ["experiment_name"]
+                "format": "{}/model_trained.tf",
+                "arg_names": ["experiment_path"]
             }
         }
     },
@@ -66,8 +66,7 @@
             "signature": "tf.keras.Model.load_weights",
             "format": "CKPT_dir",
             "path": {
-                "format": "/tmp/ckpt/{}",
-                "arg_names": ["experiment_name"]
+                "arg_names": ["experiment_path"]
             },
             "load_weights": "latest",
             "save_weights": {
