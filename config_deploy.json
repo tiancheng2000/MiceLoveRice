@@ -3,7 +3,7 @@
   "web": {
     "description": "Note: 1.SocketIO doesn't support HTTPS well 2.2020 is Mice year in China calendar",
     "cloud_vender": "",
-    "local_ip": "127.0.0.1",
+    "local_ip": "0.0.0.0",
     "local_port": "2020",
     "use_https": false,
     "certfile_path": "",
