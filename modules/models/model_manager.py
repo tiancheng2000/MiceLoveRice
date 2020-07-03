@@ -51,7 +51,9 @@ class ModelManager:
 
     @staticmethod
     def _validate_path(path):
+        from config import __abspath__
         path = path_possibly_formatted(path)
+        path = __abspath__(path) if not osp.isabs(path) else path
         if not osp.exists(path):
             raise ValueError(f"Given path is invalid: {path}")
         return path
@@ -173,7 +175,9 @@ class ModelManager:
             # CKPT signatures: "tf.train.Checkpoint.restore", "tf.keras.Model.load_weights"
             ckpt_dir, ckpt_path_to_load = None, None
             if params_train.checkpoint.format == "CKPT_dir":
+                from config import __abspath__
                 ckpt_dir = path_possibly_formatted(params_train.checkpoint.path)
+                ckpt_dir = __abspath__(ckpt_dir) if not osp.isabs(ckpt_dir) else ckpt_dir
                 ensure_dir_exists(ckpt_dir)
                 ckpt_path_to_load = tf.train.latest_checkpoint(ckpt_dir)
             if params_train.checkpoint.load_weights == "latest" \
@@ -358,7 +362,9 @@ class ModelManager:
                         x_show = x_show.map(denormalize)
                 save_dir, save_paths = None, None
                 if need_to_save:
+                    # from config import __abspath__  <-- relative path is safe
                     save_dir = path_possibly_formatted(params_predict.show_result.save_path)
+                    # save_dir = __abspath__(save_dir) if not osp.isabs(save_dir) else save_dir
                     save_paths = [osp.join(save_dir, _+'.jpg') for _ in dumps]
                 if params_predict.show_result.plotter == "matplot":
                     onlysave_path = None

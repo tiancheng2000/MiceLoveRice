@@ -41,7 +41,9 @@ class DataManager:
 
     @staticmethod
     def _validate_path(path):
+        from config import __abspath__
         path = path_possibly_formatted(path)
+        path = __abspath__(path) if not osp.isabs(path) else path
         if not osp.exists(path):
             raise ValueError(f"Given path is invalid: {path}")
         return path
@@ -118,7 +120,7 @@ class DataManager:
             this_task: asyncio.Task = None
 
             @track_entry_and_exit.coro()
-            async def coro_consume_files(filepath_or_list, cbs):
+            async def coro_consume_files(abspath_or_list, cbs):
                 nonlocal this_task
                 assert this_task is not None, '`this_task` should have been assigned before entering related coro.'
 
@@ -127,7 +129,7 @@ class DataManager:
 
                 DEBUG(f'[coro_consume_inputs]: {locals()}')
                 on_done, on_succeeded, on_failed, on_progress = amend_blank_cbs(cbs)
-                filepaths = filepath_or_list if isinstance(filepath_or_list, list) else [filepath_or_list]
+                filepaths = abspath_or_list if isinstance(abspath_or_list, list) else [abspath_or_list]
                 result = {}  # data: tf.data.Dataset::{image_t}, error: optional(str)
 
                 # from helpers.tf_helper import image_example
@@ -161,9 +163,9 @@ class DataManager:
                 data = result.get('data', None)
 
             @webapp.on_uploads(namespace="data_manager::ui_web_files", onetime=True)
-            def handle_ui_web_files(filepath_or_list):
+            def handle_ui_web_files(abspath_or_list):
                 nonlocal this_task
-                this_task = AsyncManager.run_task(coro_consume_files(filepath_or_list, (on_done_consume_inputs,)))
+                this_task = AsyncManager.run_task(coro_consume_files(abspath_or_list, (on_done_consume_inputs,)))
                 handler_result = {'asynctask_id': this_task.id}
                 return handler_result
 

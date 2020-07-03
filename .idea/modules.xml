@@ -3,7 +3,7 @@
   <component name="ProjectModuleManager">
     <modules>
       <module fileurl="file://$PROJECT_DIR$/.idea/MiceLoveRice.iml" filepath="$PROJECT_DIR$/.idea/MiceLoveRice.iml" />
-      <module fileurl="file://$PROJECT_DIR$/../../tensorflow_test/TripletLoss/tensorflow-triplet-loss(mnist)/.idea/tensorflow-triplet-loss(mnist).iml" filepath="$PROJECT_DIR$/../../tensorflow_test/TripletLoss/tensorflow-triplet-loss(mnist)/.idea/tensorflow-triplet-loss(mnist).iml" />
+      <module fileurl="file://$PROJECT_DIR$/../../counterfeitchk_web/.idea/counterfeitchk_web.iml" filepath="$PROJECT_DIR$/../../counterfeitchk_web/.idea/counterfeitchk_web.iml" />
       <module fileurl="file://$PROJECT_DIR$/../../ykkzipper_featcomp/.idea/ykkzipper_featcomp.iml" filepath="$PROJECT_DIR$/../../ykkzipper_featcomp/.idea/ykkzipper_featcomp.iml" />
     </modules>
   </component>
