@@ -18,6 +18,7 @@ class _DataSignature(enum.Enum):
     TFKerasDataset = ("tf.keras.datasets.load_data", "Name",
                       "mnist, fashion_mnist, boston_housing, imdb, cifar10/100, reuters. "
                       "Result: tuple of numpy array `(x_train, y_train), (x_test, y_test)`")
+    UI_Copy_Files = ("ui_copy_files", "Paths", "listen to ui clipboard event (ctrl+c) to get data")
     UI_Web_Files = ("ui_web_files", "Paths", "listen to ui web event (uploads) to get data")
     # -- TF1.x ---------------------------------------
     LabeledFolders = ("labeled_folders", "Path")

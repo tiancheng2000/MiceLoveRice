@@ -45,7 +45,28 @@
                 "normalize": true
             }
         },
+        "data_simple_test2": {
+            "signature": "single_file",
+            "format": "Path",
+            "path": "/tmp/Dataset/mnist/test/0_00001.jpg",
+            "decode_x": {
+                "name": "decode_image_file",
+                "encoding": "jpg",
+                "colormode": "grayscale"
+            }
+        },
         "data_ui_test": {
+            "description": "listen to ui event and accept data",
+            "signature": "ui_copy_files",
+            "format": "Paths",
+            "decode_x": {
+                "name": "decode_image_file",
+                "colormode": "grayscale",
+                "color_transform": "complementary",
+                "normalize": true
+            }
+        },
+        "data_ui_test2": {
             "description": "listen to ui event and accept data",
             "signature": "ui_web_files",
             "format": "Paths",
