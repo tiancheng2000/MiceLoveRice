@@ -9,8 +9,8 @@ __all__ = [
 
 
 # TODO: allow Sequential decode functions
-# TODO: after support arbitrary image format, change default encoding in all caller methods from `'jpg'` to `None`
-# @tf.function  # TEMP
+# TODO: after supporting arbitrary image format, change default encoding in all caller methods from `'jpg'` to `None`
+@tf.function
 def decode_image_file(path, encoding=None, colormode=None, reshape: list = None,
                       preserve_aspect_ratio=True, color_transform=None, normalize=True) -> tf.Tensor:
     """
@@ -80,7 +80,11 @@ def decode_image_file(path, encoding=None, colormode=None, reshape: list = None,
     if reshape is not None:
         # NOTE: 记得图像处理、DL领域一直用(height, width, channel)这一顺序
         _, resize_h, resize_w, _ = reshape
-        image = tf.image.resize(image, [resize_h, resize_w], preserve_aspect_ratio=preserve_aspect_ratio)  # bilinear
+        if preserve_aspect_ratio:
+            # IMPROVE: background will be black.. how to customize it (e.g. random bkg, median color)
+            image = tf.image.resize_with_pad(image, resize_h, resize_w)
+        else:
+            image = tf.image.resize(image, [resize_h, resize_w], preserve_aspect_ratio=False)  # bilinear
     if color_transform == "complementary":
         image = tf.math.subtract(tf.constant(255, dtype=image.dtype), image)
     if normalize:

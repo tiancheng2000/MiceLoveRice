@@ -4,7 +4,8 @@
     <content url="file://$MODULE_DIR$" />
     <orderEntry type="jdk" jdkName="Python 3.7 (tensorflow2)" jdkType="Python SDK" />
     <orderEntry type="sourceFolder" forTests="false" />
-    <orderEntry type="module" module-name="tensorflow-triplet-loss(mnist)" />
+    <orderEntry type="module" module-name="counterfeitchk_web" />
+    <orderEntry type="module" module-name="ykkzipper_featcomp" />
   </component>
   <component name="PackageRequirementsSettings">
     <option name="requirementsPath" value="" />

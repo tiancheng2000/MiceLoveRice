@@ -2,7 +2,8 @@
 import enum
 import os.path as osp
 
-from helpers.util import DEBUG, INFO, WARN, ERROR, Params, dump_iterable_data, path_possibly_formatted, ensure_web_app
+from helpers.util import DEBUG, INFO, WARN, ERROR, Params, dump_iterable_data, path_possibly_formatted, ensure_web_app,\
+    safe_import_module
 
 __all__ = [
     "DataManager",
@@ -41,7 +42,9 @@ class DataManager:
 
     @staticmethod
     def _validate_path(path):
+        from config import __abspath__
         path = path_possibly_formatted(path)
+        path = __abspath__(path) if not osp.isabs(path) else path
         if not osp.exists(path):
             raise ValueError(f"Given path is invalid: {path}")
         return path
@@ -58,13 +61,13 @@ class DataManager:
         data = None
         params_data = Params(
             timeout=0,
-            test_split=0.2, fixed_seed=None,
+            need_shuffle=False, shuffle_seed=None,
+            test_split=0.2,
             decode_x=Params(colormode=None, resize_w=None, resize_h=None, preserve_aspect_ratio=True,
                             normalize=True, reshape=[]),
             decode_y=Params()).update_to(params)
         if data_signature == _DataSignature.LabeledFolders.signature:
             params_data = Params(file_exts=['jpg'], labels_ordered_in_train=None).update_to(params_data)
-            # TODO: consider fix random seeds or control shuffle flags here and there
             import modules.data.dataset_labeled_folders as dataset_labeled_folders
             # format_ = DataManager._validate_format(kwargs['format'], _DataSignature.LabeledFolders)
             path = DataManager._validate_path(params_data.path)
@@ -81,6 +84,7 @@ class DataManager:
             if params_data.decode_x.normalize:
                 x_train, x_test = x_train/255.0, x_test/255.0
             if params_data.decode_x.reshape.__len__() > 0:
+                # TODO: decode_x reshape means image reshape, not matrix reshape
                 x_train = x_train.reshape(params_data.decode_x.reshape)
                 x_test = x_test.reshape(params_data.decode_x.reshape)
             DEBUG(f"loaded data: y_train={y_train}, y_test={y_test}")
@@ -115,10 +119,10 @@ class DataManager:
             from async_ import AsyncLoop, AsyncManager, amend_blank_cbs
             from helpers.util import track_entry_and_exit, load_image_mat, async_show_image_mats
             import asyncio
-            this_task: asyncio.Task = None
+            this_task: asyncio.Task or None = None
 
             @track_entry_and_exit.coro()
-            async def coro_consume_files(filepath_or_list, cbs):
+            async def coro_consume_files(abspath_or_list, cbs):
                 nonlocal this_task
                 assert this_task is not None, '`this_task` should have been assigned before entering related coro.'
 
@@ -127,7 +131,7 @@ class DataManager:
 
                 DEBUG(f'[coro_consume_inputs]: {locals()}')
                 on_done, on_succeeded, on_failed, on_progress = amend_blank_cbs(cbs)
-                filepaths = filepath_or_list if isinstance(filepath_or_list, list) else [filepath_or_list]
+                filepaths = abspath_or_list if isinstance(abspath_or_list, list) else [abspath_or_list]
                 result = {}  # data: tf.data.Dataset::{image_t}, error: optional(str)
 
                 # from helpers.tf_helper import image_example
@@ -161,9 +165,9 @@ class DataManager:
                 data = result.get('data', None)
 
             @webapp.on_uploads(namespace="data_manager::ui_web_files", onetime=True)
-            def handle_ui_web_files(filepath_or_list):
+            def handle_ui_web_files(abspath_or_list):
                 nonlocal this_task
-                this_task = AsyncManager.run_task(coro_consume_files(filepath_or_list, (on_done_consume_inputs,)))
+                this_task = AsyncManager.run_task(coro_consume_files(abspath_or_list, (on_done_consume_inputs,)))
                 handler_result = {'asynctask_id': this_task.id}
                 return handler_result
 
@@ -178,5 +182,9 @@ class DataManager:
         else:
             raise ValueError(f"Unsupported data signature: {data_signature}")
         # TODO: consider shuffle, repeat(epoch), batch(batch_size), prefetch(1) for train/predict, use tf.data.Database
-        # if isinstance(data, tf.data.Dataset):...
+        #   data can be tf.Dataset, np.ndarray, or tuple of them. Do this job in each signature handler.
+        # tf = safe_import_module("tensorflow")
+        # if tf and isinstance(data, tf.data.Dataset):
+        #     if params_data.shuffle.fixed_seed:
+        #         data.shuffle(buffer_size=10000, seed=params_data.shuffle.fixed_seed)
         return data

@@ -49,11 +49,11 @@ def main(*args, **kwargs):
 
         if model is None:  # not config_experiment.train.enabled
             config_model: Params = config_experiment.model_set.model_trained
-            if config_model.is_blank():
+            if config_model.is_defined():
                 raise ValueError('Config error: `model_trained` node is not defined')
             model = ModelManager.load_model(config_model.signature, **config_model)
 
-        predictions = ModelManager.model_predict(model, x_test, y_test, **config_experiment.predict)
+        predictions = ModelManager.model_predict(model, (x_test, y_test), **config_experiment.predict)
 
         INFO(f"predictions: {', '.join([str(_) for _ in predictions])}")
     else:
