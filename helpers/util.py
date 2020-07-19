@@ -35,6 +35,8 @@ __all__ = [
     # -- Input :: User Interactive --------------
     "adjust_interrupt_handlers",
     "ensure_web_app",
+    # -- Libraries, Packages ---------------
+    "safe_import_module",
     # -- File Operations --------------
     "ensure_dir_exists",
     "tmp_filename_by_time",
@@ -60,6 +62,7 @@ __all__ = [
     "dump_to_json",
     "safe_get_len",
     "safe_slice",
+    "np_top_k",
     "dict_compare",
     "dict_left_join",
     "dict_right_join",
@@ -69,6 +72,9 @@ __all__ = [
     "hasmethod",
     # -- Thread Process ---------------
     "print_time_consumed",
+    # -- Quick Test -------------------
+    "quick_load_image_tensor",
+    "quick_load_imagenet_labels",
 ]
 
 # -----------------------------------------------------#
@@ -323,7 +329,7 @@ class Params(dict):
             super(self.__class__, self).__init__(**kwargs)
         if not self.__class__.__class_initialized__:
             self.__class__.__class_initialized__ = True
-            self.__class__._key_missed_value = Params({})  # sentinel, allows check validity by `is_blank()`
+            self.__class__._key_missed_value = Params({})  # sentinel, allows check validity by `is_defined()`
 
     def __getattr__(self, attr_name):
         # NOTE: only called when has not found the attribute
@@ -339,7 +345,7 @@ class Params(dict):
         # NOTE: if Params[key] missed, returns this value instead of raising KeyError (or IndexError)
         return Params._key_missed_value
 
-    def is_blank(self):
+    def is_defined(self):
         """
         NOTE: only use this checking a :class:`Params` node. For leaf nodes (str, list)
           :func:`__len__()` or `isinstance(node, type)` is suggested
@@ -401,6 +407,34 @@ class Params(dict):
         return self
 
     def update(self, other: dict, key_map: dict = None, **others):
+        # NOTE: dict.update() always returns `None`, so should not be used in assignment
+        other = other.copy()
+        others = others.copy()
+        key_map = {} if key_map is None else key_map
+        for key, value in self.items():
+            # 1.key translation and replace mapped keys of other and others
+            key_right = key_map.get(key, None)
+            if key_right in other:
+                other[key] = other[key_right]
+                del other[key_right]
+            if key_right in others:
+                others[key] = others[key_right]
+                del others[key_right]
+            # 2.recursively update if node is a Params object
+            if isinstance(value, self.__class__):
+                value_in_other = other[key] if key in other else {}
+                value_in_others = others[key] if key in others else {}
+                value.update(value_in_other, key_map, **value_in_others)
+                self[key] = value
+                if key in other:
+                    del other[key]
+                if key in others:
+                    del others[key]
+        super(self.__class__, self).update(other, **others)
+        return None  # always return `None` as dict's behavior
+
+    # -- deprecated --
+    def update_v1(self, other: dict, key_map: dict = None, **others):
         # NOTE: dict.update() always returns `None`, so should not be used in assignment
         if key_map is not None:
             other = other.copy()
@@ -542,6 +576,16 @@ def print_time_consumed(format_: str = "[INFO] time consumed: {:.5f}s", file=sys
     time_now = time.time()
     print(format_.format(time_now - time_begin), file=file)
 
+# -----------------------------------------------------#
+# -- Libraries, Packages ---------------
+def safe_import_module(name):
+    module = None
+    try:
+        from importlib import import_module
+        module = import_module(name)
+    except ModuleNotFoundError as e:
+        WARN(f'failed in trying to load the module {name}')
+    return module
 
 # -----------------------------------------------------#
 # -- File Operations --------------
@@ -572,6 +616,8 @@ def show_image_mat(image_mat, text=None, title=None, cell_size: tuple = None, bl
     if any([type(image_mat).__name__.endswith(_) for _ in ('Tensor', 'Dataset')]):
         from helpers.tf_helper import tf_obj_to_np_array
         image_mat = tf_obj_to_np_array(image_mat)
+    if image_mat.shape.__len__() == 4:
+        image_mat = image_mat[0]
     from helpers.plt_helper import plot_image_mat as plt_show_image_mat
     return plt_show_image_mat(image_mat, text, title, cell_size, block, onlysave_path)
 
@@ -583,6 +629,8 @@ def save_image_mat(image_mat, image_path, **kwargs):
     if any([type(image_mat).__name__.endswith(_) for _ in ('Tensor', 'Dataset')]):
         from helpers.tf_helper import tf_obj_to_np_array
         image_mat = tf_obj_to_np_array(image_mat)
+    if image_mat.shape.__len__() == 4:
+        image_mat = image_mat[0]
     from helpers.plt_helper import save_image_mat as plt_save_image_mat
     plt_save_image_mat(image_mat, image_path, **kwargs)
 
@@ -885,6 +933,30 @@ def safe_slice(obj: Sequence, start=0, end=0, step=None):
         return obj
     raise TypeError(f'Unexpected type to safe_slice: {type(obj).__name__}')
 
+def np_top_k(arr, top_k, axis=-1, order=1):
+    """
+    :param arr:
+    :param top_k:
+    :param axis:
+    :param order: 1 for descending, 0 for ascending
+    :return:
+    """
+    import numpy as np
+    # IMPROVE: use np.argpartition for efficiency
+    #   full sorting is not necessary. ref:blog.csdn.net/SoftPoeter/article/details/86629329
+    idxs = np.argsort(arr, axis=axis)  # ascending order
+    if order == 1:
+        idxs = np.flip(idxs, axis=axis)
+    idxs = idxs.take(np.arange(top_k), axis=axis)
+    arr = np.take_along_axis(arr, idxs, axis=-1)  # not np.take()
+    return arr, idxs
+
+def np_softmax(arr):
+    import numpy as np
+    arr -= np.max(arr, axis=-1, keepdims=True)
+    return np.exp(arr) / np.sum(np.exp(arr), axis=-1, keepdims=True)
+
+
 def dict_compare(before, after):
     # IMPROVE: removed
     new = {}
@@ -950,17 +1022,30 @@ def dict_right_join(self, other: dict, key_map: dict = None, **others):
 
 def dict_update(self, other: dict, key_map: dict = None, **others):
     # NOTE: dict.update() always returns `None`, so should not be used in assignment
-    if key_map is not None:
-        other = other.copy()
-        others = others.copy()
-        for key_left, key_right in key_map.items():
-            if key_right in other:
-                other.__setitem__(key_left, other.get(key_right))
-                del other[key_right]
-            if key_right in others:
-                others.__setitem__(key_left, others.get(key_right))
-                del others[key_right]
-    return self.update(other, **others)  # always return `None` as dict's behavior
+    other = other.copy()
+    others = others.copy()
+    key_map = {} if key_map is None else key_map
+    for key, value in self.items():
+        # 1.key translation and replace mapped keys of other and others
+        key_right = key_map.get(key, None)
+        if key_right in other:
+            other[key] = other[key_right]
+            del other[key_right]
+        if key_right in others:
+            others[key] = others[key_right]
+            del others[key_right]
+        # 2.recursively update if node is a Params object
+        if isinstance(value, self.__class__):
+            value_in_other = other[key] if key in other else {}
+            value_in_others = others[key] if key in others else {}
+            value.update(value_in_other, key_map, **value_in_others)
+            self[key] = value
+            if key in other:
+                del other[key]
+            if key in others:
+                del others[key]
+    self.update(other, **others)
+    return None  # always return `None` as dict's behavior
 
 def dict_fromkeys(self, keys: Iterable[str], key_map: Dict[str, str] = None) -> Dict[str, Any]:
     """
@@ -1011,3 +1096,22 @@ def safe_get(collection: Any, key, default_value=None):
 
 def hasmethod(obj, name):
     return hasattr(obj, name) and callable(obj.__getattribute__(name))
+
+# -----------------------------------------------------#
+# -- Quick Test -------------------
+def quick_load_image_tensor(grayscale=False, normalize=True, rank=4):
+    from config import Config
+    import numpy as np
+    image_path = Config.QuickTest.InputImagePath if not grayscale else Config.QuickTest.GrayscaleImagePath
+    image_mat = load_image_mat(image_path)
+    if normalize and any([str(image_mat.dtype).startswith(_) for _ in ('int', 'uint')]):
+        image_mat = image_mat.astype(np.float32) / 255.0  # normalize = true
+    if rank == 4 and image_mat.shape.__len__() == 3:
+        image_mat = np.expand_dims(image_mat, axis=0)
+    import tensorflow as tf
+    return tf.convert_to_tensor(image_mat)
+
+def quick_load_imagenet_labels():
+    from config import Config
+    import numpy as np
+    return np.array(open(Config.QuickTest.ImagenetLabelsPath).read().splitlines())

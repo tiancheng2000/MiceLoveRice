@@ -5,9 +5,17 @@ __all__ = [
     "preload_gpu_devices",
     "async_preload_gpu_devices",
     "tf_obj_to_np_array",
-    "is_mapdataset",
+    "is_tfdataset",
     "image_example",
+    "norm_keep_batch_dim",
 ]
+
+# IMPROVE: compatibility with TF1.x
+# if tf.version.VERSION.startswith('1.'):
+#     import tensorflow as tf1
+# else:  # tf v2.x
+#     import tensorflow.compat.v1 as tf1
+#     tf1.disable_v2_behavior()
 
 __preloaded_gpu___ = False
 
@@ -46,7 +54,18 @@ def async_preload_gpu_devices():
     return task
 
 
+# TODO: make sure if this method can be replaced by `isinstance(obj, tf.data.Dataset)` in every case
+def is_tfdataset(obj):
+    import tensorflow as tf
+    # ds = tf.data.Dataset.from_tensor_slices([''])  # => tensorflow.python.data.ops.dataset_ops.TensorSliceDataset
+    # ds = ds.map(lambda x: x)  # => tensorflow.python.data.ops.dataset_ops.MapDataset
+    # return type(obj).__name__.endswith('Dataset')
+    return isinstance(obj, tf.data.Dataset)  # *Dataset(*={Zip,Map,Take,Skip..}) are all Database
+
 def tf_obj_to_np_array(tf_obj: object):
+    """
+    NOTE: for big tf.Dataset, such conversion, which flush all into memory, will exhaust resources.
+    """
     import tensorflow as tf
     import numpy as np
     # assert isinstance(tf_data, tf.data.Dataset)  # NOTE: MapDataset, or Prefetch/Take/.. is NOT Dataset...
@@ -56,12 +75,6 @@ def tf_obj_to_np_array(tf_obj: object):
     elif hasmethod(tf_obj, 'numpy'):
         return tf_obj.numpy()
 
-
-def is_mapdataset(obj):
-    import tensorflow as tf
-    ds = tf.data.Dataset.from_tensor_slices([''])
-    ds = ds.map(lambda x: x)
-    return type(obj).__name__ == type(ds).__name__
 
 def _bytes_feature(value):
     """Returns a bytes_list from a string / byte."""
@@ -93,3 +106,18 @@ def image_example(image_string, path=None, label=None):
     }
     return tf.train.Example(features=tf.train.Features(feature=feature))
 
+def norm_keep_batch_dim(np_or_tf_arr):
+    """
+    :param np_or_tf_arr: (batch=1, width, height, feature), a 4D np.ndarray or tf.Tensor
+    :return:
+    """
+    import numpy as np
+    if isinstance(np_or_tf_arr, np.ndarray):
+        for i in range(np_or_tf_arr.shape[0]):  #
+            np_or_tf_arr[i] = np_or_tf_arr[i] / np.linalg.norm(np_or_tf_arr[i])
+    else:
+        import tensorflow as tf
+        if isinstance(np_or_tf_arr, tf.Tensor):
+            for i in range(np_or_tf_arr.shape[0]):
+                np_or_tf_arr[i] = np_or_tf_arr[i] / tf.linalg.norm(np_or_tf_arr[i])
+    return np_or_tf_arr

@@ -61,7 +61,7 @@
         "enabled": false,
         "validation_split": 0.2,
         "epochs": 5,
-        "batch": 48,
+        "batch_size": 48,
         "checkpoint": {
             "signature": "tf.keras.Model.load_weights",
             "format": "CKPT_dir",

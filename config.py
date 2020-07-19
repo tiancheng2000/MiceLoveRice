@@ -41,15 +41,17 @@ class Config:
     class QuickTest:
         InputImagePath = "/tmp/ykk_waterdrop_black.jpg"  # SH06-0074_v002.jpg"  # for Test only
         GrayscaleImagePath = "/tmp/0_00001.jpg"
+        ImagenetLabelsPath = "/tmp/Dataset/imagenet/imagenet_slim_labels.txt"
 
-    __ExperimentNames__ = ['tripletloss/inceptresv2_tlearn33c+tripletloss+ykk(5c,251)',  # 2020/05/25
+    __ExperimentNames__ = ['retrain/inceptresv2+scansnap(6class)',  # 2020/07/03
+                           'tripletloss/inceptresv2_tlearn33c+tripletloss+ykk(5c,251)',  # 2020/05/25
                            'tripletloss/simple_sequential+tripletloss+mnist',  # 2020/04/09
                            '_test_/tf_1x_to_2x_3',  # 2020/03/31,筑基
                            'retrain/inceptionresnetv2+tlearn(33class)',  # 2020/03/26
                            '_test_/embedding_distance',  # 2020/03/24
                            'tripletloss/inceptresv2_tlearn33c+tripletloss+miniset(138+3,gray)'  # 2020/03/23
                            ]
-    _ExperimentName = __ExperimentNames__[2]  # <== select an active experiment
+    _ExperimentName = __ExperimentNames__[0]  # <== select an active experiment
 
     @classproperty  # IMPROVE: use class property
     def ExperimentName(self=None) -> str: return Config._ExperimentName
