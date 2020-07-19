@@ -36,7 +36,7 @@ __full_sets__ = None  # root_path --> data_paths, labels
 
 # noinspection SpellCheckingInspection
 def _load_as_data_label_lists(root_path, file_exts: set, labels_ordered_in_train=None,
-                              need_shuffle=False, fixed_seed=None, force_reload=False):
+                              need_shuffle=False, shuffle_seed=None, force_reload=False):
     global __full_sets__
     if __full_sets__ is None:
         __full_sets__ = collections.OrderedDict()  # IMPROVE: use dict ?
@@ -53,8 +53,8 @@ def _load_as_data_label_lists(root_path, file_exts: set, labels_ordered_in_train
         #   tf.data.Dataset.list_files() can directly return globed result!
         data_paths.extend(glob.glob(glob_pattern))
     # IMPROVE: use (shuffled_idx=) np.random.permutation(len(data)) instead
-    if type(fixed_seed) is int:
-        random.seed(fixed_seed)
+    if type(shuffle_seed) is int:
+        random.seed(shuffle_seed)
     if need_shuffle:
         random.shuffle(data_paths)
 
@@ -94,20 +94,22 @@ def _load_as_data_label_lists(root_path, file_exts: set, labels_ordered_in_train
     }
 
 
-def dataset(root_path, file_exts={'jpg', 'jpeg', 'png', 'gif', 'bmp'}, category='all', labels_ordered_in_train=None,
-            test_split=0.2, fixed_seed=None, decode_x={}, decode_y={},
+def dataset(root_path, file_exts={'jpg', 'jpeg', 'png', 'gif', 'bmp'}, category='all', need_shuffle=False, shuffle_seed=None,
+            labels_ordered_in_train=None, test_split=0.2, decode_x={}, decode_y={},
             meta_info=None, **unused) -> tf.data.Dataset or (tf.data.Dataset, tf.data.Dataset):
     """
+    TODO: `images, labels = tf.keras.preprocessing.image.ImageDataGenerator::flow_from_directory` implemented this.
     Retrieves data files from each labeled folders.
     :param root_path: absolute path of root of labeled folders
     :param file_exts: set of file extensions to be matched
     :param category: 'train': with 'eval'(=validation) together, used in training phase; 'test': used in predicting phase
+    :param need_shuffle: need to shuffle before validation_split in some cases, otherwise validation data could be the last class
+    :param shuffle_seed: only effective when shuffle. given same random seed, the order of returned files will be same.
     :param labels_ordered_in_train: folder names must be sorted in the same order that used in training for prediction
-    :param test_split: deprecated. category split should be done by the caller
-    :param fixed_seed:
+    :param test_split: deprecated. category split should be done by the caller  # TODO: deprecation
     :param decode_x: params of decoding x (data)
     :param decode_y: params of decoding y (labels)
-    :param meta_info: if given as a dict, caller may get 'total' and 'vocabulary' through it
+    :param meta_info: if given a dict, caller can retrieve 'total' and 'vocabulary'() info
     :return: tf.data.Database, if category='all', 'train' and 'test' dataset will be returned as a tuple
     """
     global __full_sets__
@@ -117,10 +119,11 @@ def dataset(root_path, file_exts={'jpg', 'jpeg', 'png', 'gif', 'bmp'}, category=
     #     raise ValueError("category must be specified for when fetching dataset_labeled_folders.")
 
     # IMPROVE: try directly use `tf.data.dataset.list_files(file_pattern)`
-    _load_as_data_label_lists(root_path, file_exts, labels_ordered_in_train=labels_ordered_in_train, fixed_seed=fixed_seed)
+    _load_as_data_label_lists(root_path, file_exts, need_shuffle=need_shuffle, shuffle_seed=shuffle_seed,
+                              labels_ordered_in_train=labels_ordered_in_train)
     total = __full_sets__[root_path]['total']
-    vocabulary_list = __full_sets__[root_path]['vocabulary']
-    data_fns, labels = __full_sets__[root_path]['all']  # fn: filename
+    vocabulary_list = __full_sets__[root_path]['vocabulary']  # vocabulary of label names
+    data_fns, labels = __full_sets__[root_path]['all']  # fn: filename, labels: label's index in vocabulary_list
     if category == 'train':
         data_fns = data_fns[0:int((1-test_split) * total)]
         labels = labels[0:int((1-test_split) * total)]

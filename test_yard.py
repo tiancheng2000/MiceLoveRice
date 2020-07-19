@@ -37,16 +37,30 @@ def test_util_logging():
     print("print message here")  # print() should be replaced by logging func, it cannot be captured by pytest
 
 def test_util_miscs():
-    __test_flow__ = ('Params', 'data_process', 'image_mat')[2]
+    __test_flow__ = ('Params', 'data_process', 'image_mat')[0]
     INFO(f"__test_flow__: {__test_flow__}")
     if __test_flow__ == 'Params':
         config_experiment = ConfigSerializer.load(Path.ExperimentConfigAbs)
         # test value of missed (not existing) key
         value = config_experiment.predict.key_miss
-        INFO(f"(string) value of missed key: {value}")
+        INFO(f"(string) value of missed key: {value}, is_defined: {value.is_defined()}, is `None`: {value is None}")
         config_experiment.data_set.data.format = "not_existed_value"
         INFO(f"set a (string) attr and get from attr: {config_experiment.data_set.data.format}")
         INFO(f"set a (string) attr and get from key: {config_experiment.data_set.data['format']}")
+        params_none = Params(not_existed=None)
+        INFO(f"params_none before update_to: {params_none}")
+        params_none.update_to(Params(existed='existed'))
+        INFO(f"params_none after update_to: {params_none}")
+        params_data = Params(
+            shuffle=Params(not_existed=None),
+            decode_x=Params(colormode=None, resize_w=None, resize_h=None, preserve_aspect_ratio=True,
+                            normalize=True, reshape=[]))
+        # NOTE: (updated) now can check leaf node of param by `is None` after `update_to()`.
+        INFO(f"params_data (with `None` value) before update_to: {params_data}")
+        params_data.update_to(config_experiment.data_set.data)
+        INFO(f"params_data (with `None` value) after update_to:: {params_data}")
+        # INFO(f"  is_defined: {params_data.shuffle.not_existed.is_defined()}")  # <-cannot call is_defined on leaf node
+        INFO(f"  is `None`: {params_data.shuffle.not_existed is None}")
     elif __test_flow__ == 'data_process':
         dict1 = {'a': 1, 'b': 1, 'c': 1}
         dict2 = {'a': 1, 'b': 2, 'c': 3, 'd': 4}
@@ -212,6 +226,61 @@ def test_main():
     experiment_type = str(Config.ExperimentName).split('/')[0]
     INFO('Experiment Type: ' + experiment_type)
     if experiment_type == 'retrain':
+        from modules.models.model_manager import ModelManager
+        model = None
+        from modules.data.data_manager import DataManager
+        (x_train, y_train), (x_test, y_test) = (None, None), (None, None)
+
+        # 1. load training data + build and train a model
+        if config_experiment.train.enabled:
+            config_data_train: Params = config_experiment.data_set.data
+            meta_info = {}  # retrieve meta info from DataManager
+            data, _ = DataManager.load_data(config_data_train.signature,
+                                         meta_info=meta_info, **config_data_train)
+            # NOTE: data must have been shuffled before validation_split/test_split
+            INFO(f"data loaded: {dump_iterable_data(data)}")
+            # TODO: how to know the output_spec of `dm::load_data` => add a ref arg
+            import tensorflow as tf
+            if isinstance(data, tf.data.Dataset):
+                from helpers.tf_helper import tf_obj_to_np_array
+                # TODO: stop converting to np array.
+                # IMPROVE: unzip the ZipDataset by dataset.map(lambda). Any tf API for unzip?
+                x_train = tf_obj_to_np_array(data.map(lambda x, y: x))
+                y_train = tf_obj_to_np_array(data.map(lambda x, y: y))
+            vocabulary_list = meta_info.get('vocabulary', [])
+            filenames = meta_info.get('filenames', [])
+
+            config_model: Params = config_experiment.model_set.model_base
+            model_base = ModelManager.load_model(config_model.signature, **config_model)
+            assert isinstance(model_base, tf.keras.layers.Layer), f"model_base should be a tf.keras.Layer but get a {type(model_base)}"
+            config_model: Params = config_experiment.model_set.model_append
+            model_append = ModelManager.load_model(config_model.signature, **config_model)
+            assert isinstance(model_append, tf.keras.Sequential), f"model_append should be a tf.keras.Sequential but get a {type(model_append)}"
+            model = tf.keras.Sequential([model_base]+model_append.layers)
+            model.summary()
+            model = ModelManager.model_train(model, data=(x_train, y_train), **config_experiment.train)
+            if x_test is not None:
+                eval_metrics = ModelManager.model_evaluate(model, data=(x_test, y_test))
+
+        # 2. predict output of an input (by ui_web_files)
+        if config_experiment.predict.enabled:
+            if model is None:  # not config_experiment.train.enabled
+                config_model: Params = config_experiment.model_set.model_trained
+                model = ModelManager.load_model(config_model.signature, **config_model)
+
+            if x_test is None:
+                data_key = config_experiment.predict.data_inputs.__str__()
+                config_data_test: Params = config_experiment.data_set[data_key]
+                data = DataManager.load_data(config_data_test.signature, **config_data_test)
+                INFO(f"data loaded: {dump_iterable_data(data)}")
+                # TODO: how to know the output_spec of `dm::load_data` => add a ref arg
+                import tensorflow as tf
+                if isinstance(data, tf.data.Dataset):
+                    data = data.batch(1)  # IMPROVE: read config `batch_size`
+                    data = data.prefetch(1)
+                x_test, y_test = data, None
+
+            predictions = ModelManager.model_predict(model, (x_test, y_test), **config_experiment.predict)
         pass
     elif experiment_type == '_test_':
         if Config.ExperimentName == '_test_/tf_1x_to_2x_3':
@@ -298,15 +367,15 @@ def test_main():
                             data = DataManager.load_data(config_data_test.signature, **config_data_test)
                             INFO(f"data loaded: {dump_iterable_data(data)}")
                             import tensorflow as tf
-                            from helpers.tf_helper import is_mapdataset
-                            if is_mapdataset(data):
+                            from helpers.tf_helper import is_tfdataset
+                            if isinstance(data, tf.data.Dataset):
                                 data = data.batch(1)  # IMPROVE: read config `batch_size`
                                 data = data.prefetch(1)
                             x_test, y_test = data, None
                     if model is None:  # not config_experiment.train.enabled
                         config_model: Params = config_experiment.model_set.model_trained
                         model = ModelManager.load_model(config_model.signature, **config_model)
-                    predictions = ModelManager.model_predict(model, x_test, y_test, **config_experiment.predict)
+                    predictions = ModelManager.model_predict(model, (x_test, y_test), **config_experiment.predict)
                     if not isinstance(predictions, Iterable):
                         predictions = [predictions]
                     if 'vocabulary_list' in vars() and 'filenames' in vars():
@@ -340,7 +409,7 @@ def test_main():
             data = DataManager.load_data(config_data_test.signature, **config_data_test)
             INFO(f"data loaded: {dump_iterable_data(data)}")
             x_test, y_test = data, None
-            predictions = ModelManager.model_predict(model, x_test, y_test, **config_experiment.predict)
+            predictions = ModelManager.model_predict(model, (x_test, y_test), **config_experiment.predict)
         pass
     else:
         raise ValueError('Unhandled experiment type: ' + experiment_type)
@@ -352,16 +421,34 @@ def test_data_data_manager():
     __test_flow__ = ('before_wrapping', 'wrapped')[1]  # NOTE: control test flow
     INFO(f"__test_flow__: {__test_flow__}")
     if __test_flow__ == 'before_wrapping':
-        Config.ExperimentName = "retrain/inceptionresnetv2+tlearn(33class)"
+        Config.ExperimentName = "retrain/inceptresv2+zipper(33class)"
         config_experiment = ConfigSerializer.load(Path.ExperimentConfigAbs)
         import modules.data.dataset_labeled_folders as dataset_labeled_folders
         ds = dataset_labeled_folders.dataset(config_experiment.data.path, category='train',
                                              **config_experiment.data)
         INFO(f"loaded dataset: {ds}")
     else:
-        __test_flow__ = ('mnist_tf_data_to_np_array', 'ui_input_web')[1]
+        __test_flow__ = ('labeled_folders', 'mnist_tf_data_to_np_array', 'ui_input_web')[0]
         INFO(f'__test_flow__: {__test_flow__}')
-        if __test_flow__ == 'mnist_tf_data_to_np_array':
+        if __test_flow__ == 'labeled_folders':
+            Config.ExperimentName = "retrain/inceptresv2+scansnap(6class)"
+            config_experiment = ConfigSerializer.load(Path.ExperimentConfigAbs)
+            from modules.data.data_manager import DataManager
+            config_data_train: Params = config_experiment.data_set.data
+            meta_info = {}  # retrieve meta info from DataManager
+            data, _ = DataManager.load_data(config_data_train.signature,
+                                         meta_info=meta_info, **config_data_train)
+            INFO(f"data loaded: {dump_iterable_data(data)}")
+            import tensorflow as tf
+            if isinstance(data, tf.data.Dataset):
+                from helpers.tf_helper import tf_obj_to_np_array
+                # IMPROVE: unzip the ZipDataset by dataset.map(lambda). Any tf API for unzip?
+                x_train = tf_obj_to_np_array(data.map(lambda x, y: x))
+                y_train = tf_obj_to_np_array(data.map(lambda x, y: y))
+            vocabulary_list = meta_info.get('vocabulary', [])
+            filenames = meta_info.get('filenames', [])
+            pass
+        elif __test_flow__ == 'mnist_tf_data_to_np_array':
             Config.ExperimentName = "_test_/tf_1x_to_2x_3"
             config_experiment = ConfigSerializer.load(Path.ExperimentConfigAbs)
             from modules.data.data_manager import DataManager
@@ -415,27 +502,72 @@ def test_data_decode_tf():
     print('test end.')
 
 def test_models_model_manager():
-    Config.ExperimentName = "retrain/inceptionresnetv2+tlearn(33class)"
+    # Config.ExperimentName = "retrain/inceptionresnetv2+tlearn(33class)"
     INFO('--- Experiment begins: {}---------------'.format(Config.ExperimentName))
-    config_main = ConfigSerializer.load(Path.ExperimentMainConfigAbs)
+    # config_main = ConfigSerializer.load(Path.ExperimentMainConfigAbs)
     config_experiment = ConfigSerializer.load(Path.ExperimentConfigAbs)
     experiment_type = str(Config.ExperimentName).split('/')[0]
     if experiment_type == 'retrain':
         INFO('Experiment Type: ' + experiment_type)
-        __test_flow__ = ('before_wrapping', 'wrapped')[1]
+        __test_flow__ = ('before_wrapping', 'wrapped')[0]
         INFO(f"__test_flow__: {__test_flow__}")
         if __test_flow__ == 'before_wrapping':
             import tensorflow as tf
-            model = tf.saved_model.load(config_experiment.base_model.path, tags='train')  # _tag_set=[[''],['train']]
-            INFO(list(model.signatures.keys()))
-            # ['image_feature_vector', 'default', 'image_feature_vector_with_bn_hparams']
-            infer = model.signatures["image_feature_vector"]
-            INFO(infer.structured_outputs)
-            # {dict: 14}: ... 输出=1536位fv
-            # 'default' = <tf.Tensor 'hub_output/feature_vector/SpatialSqueeze:0' shape=(None, 1536) dtype=float32>
+            from config import __abspath__
+            import os.path as osp
+            path = path_possibly_formatted(config_experiment.model_set.model_base.path)
+            path = __abspath__(path) if not osp.isabs(path) else path
+
+            __test_flow__ = ('use_tf_saved_model', 'use_tfhub')[1]
+            INFO(f"__test_flow__: {__test_flow__}")
+            if __test_flow__ == 'use_tf_saved_model':
+                model = tf.saved_model.load(path, tags=None)  # for feature_vector: _tag_set={set(), {'train'}}
+                INFO(list(model.signatures.keys()))
+                # ['image_feature_vector', 'default', 'image_feature_vector_with_bn_hparams']
+                if len(model.signatures) > 0:
+                    func_fv = model.signatures["image_feature_vector"]
+                    INFO(f'func_fv.structured_outputs: {func_fv.structured_outputs}')
+                    # {dict: 14}: ... 输出=1536位fv
+                    # 'default' = <tf.Tensor 'hub_output/feature_vector/SpatialSqueeze:0' shape=(None, 1536) dtype=float32>
+                    func_fv = model.signatures["default"]
+                    INFO(f'func_predict.structured_outputs: {func_fv.structured_outputs}')
+                    # {'default': <tf.Tensor 'hub_output/feature_vector/SpatialSqueeze:0' shape=(None, 1536) dtype=float32>}
+            else:
+                import tensorflow_hub as tfhub
+                model = tf.keras.Sequential([
+                    # NOTE: cannot specify tags={..} (to load model with multi-tags) in TF2.1..solved in 2.2
+                    tfhub.KerasLayer(path)
+                ])
+                # model = tfhub.load(path, tags={})
+                # model.build([None, 299, 299, 3])  # since incept_resnet_v2/4, input shape can be arbitary
+
+            import numpy as np
+            image_path = Config.QuickTest.InputImagePath
+            image_mat = load_image_mat(image_path)
+            if any([str(image_mat.dtype).startswith(_) for _ in ('int', 'uint')]):
+                image_mat = image_mat.astype(np.float32) / 255.0  # normalize = true
+            if image_mat.shape.__len__() == 3:
+                image_mat = np.expand_dims(image_mat, axis=0)
+            # predictions = model.predict(image_mat)  # TODO: modify ModelManager::model_predict() logic
+            import tensorflow as tf
+            image_t = tf.convert_to_tensor(image_mat)
+
+            if 'func_fv' in vars() and callable(func_fv):
+                result = func_fv(image_t)
+                INFO(f"result of model.signatures['default'] function={result}")
+            else:
+                assert callable(model)
+                result = model(image_t)  # if feature_vector shape=(1,1536), if classification shape=(1,1001)
+                if tuple(result.shape) == (1, 1001):
+                    probs = np.exp(result[0]) / np.sum(np.exp(result[0]), axis=0)
+                    labels = quick_load_imagenet_labels()
+                    probs, idxs = tf.math.top_k(probs, k=3)
+                    INFO(f"result of model()={dump_iterable_data(result)}, label={labels[idxs.numpy()]}, probs={probs.numpy()}")
+                else:
+                    INFO(f"result of model()={dump_iterable_data(result)}")
         else:
             from modules.models.model_manager import ModelManager
-            model = ModelManager.load_model(config_experiment.base_model.signature,
+            model = ModelManager.load_model(config_experiment.model_set.model_base.signature,
                                             **config_experiment.base_model)
     else:
         raise ValueError('Unhandled experiment type: ' + experiment_type)
@@ -673,24 +805,48 @@ def test_asyncio_misc():
             loop.call_soon_threadsafe(loop.stop)
 
 
-def test_tf_misc(show_done=False):
+def test_tf_misc(run_legacy=False):
     import tensorflow as tf
     # -------------------------------------------------------------------------------------------
-    # [2020-03-30] integer-string label -> integer
-    label = "12345"
-    __test_flow__ = ("tf.io.decode_raw", "tf.strings.to_number")[1]
+    # [2020-07-13] 再确认图片等比缩放且自动补背景的tf实现
+    resize_h, resize_w = 299, 299
+    __test_flow__ = ("not_only_jpeg", "only_jpeg")[0]
     INFO(f"__test_flow__: {__test_flow__}")
-    if __test_flow__ == "tf.io.decode_raw":
-        label = tf.io.decode_raw(label, tf.dtypes.uint8)  # label将变成5个单位的Tensor
-        label = tf.reshape(label, [])  # label should be a scalar. 这一步将失败，因为不匹配
-    else:
-        label = tf.strings.to_number(label, tf.dtypes.int32)  # NOTE: uint8 is not acceptable
-    tf.get_logger().info(label)
-    INFO(f"label={label}")  # both logging can be seen in pytest console
+    if __test_flow__ == "not_only_jpeg":
+        from helpers.util import quick_load_image_tensor, show_image_mat
+        image = quick_load_image_tensor()
+        # image = tf.image.resize(image, [resize_h, resize_w], preserve_aspect_ratio=True)  # default=bilinear
+        image = tf.image.resize_with_pad(image, resize_h, resize_w)  # background will be black, no method to set it..
+        show_image_mat(image.numpy())
+    elif __test_flow__ == "only_jpeg":
+        from helpers.util import show_image_mat
+        from config import Config
+        image_jpeg_string_t = tf.io.read_file(Config.QuickTest.InputImagePath)
+
+        def decode_and_center_crop(image_jpeg_string_t, image_size, crop_padding=32):
+            shape = tf.image.extract_jpeg_shape(image_jpeg_string_t)
+            image_height, image_width = shape[:2]
+            padded_center_crop_size = tf.cast(
+                ((image_size / (image_size + crop_padding)) *
+                 tf.cast(tf.minimum(image_height, image_width), tf.float32)),
+                tf.int32)
+            # FIXME: offset calculation in this sample is incorrect
+            offset_height = ((image_height - padded_center_crop_size) + 1) // 2
+            offset_width = ((image_width - padded_center_crop_size) + 1) // 2
+            crop_window = tf.stack([offset_height, offset_width,
+                                    padded_center_crop_size, padded_center_crop_size])
+            image_t = tf.image.decode_and_crop_jpeg(image_jpeg_string_t, crop_window, channels=3)
+            image_t = tf.image.resize(image_t, [image_size, image_size], preserve_aspect_ratio=True)
+            return image_t
+
+        image_t = decode_and_center_crop(image_jpeg_string_t, resize_h, crop_padding=0)
+        image_t /= 255.0
+        show_image_mat(image_t.numpy())
+
     pass
 
     # --- Done ----------------------------------------------------------------------------------
-    if show_done:
+    if run_legacy:
         # [2020-03-27] 任意tf.function代码（含逻辑控制）保存进SavedModel
         @tf.function(input_signature=[tf.TensorSpec([], tf.int32)])
         def control_flow(x):
@@ -708,3 +864,39 @@ def test_tf_misc(show_done=False):
         imported.control_flow123(tf.constant(-1))
         imported.control_flow123(tf.constant(2))
         imported.control_flow123(tf.constant(3))
+
+        # [2020-03-30] integer-string label -> integer
+        label = "12345"
+        __test_flow__ = ("tf.io.decode_raw", "tf.strings.to_number")[1]
+        INFO(f"__test_flow__: {__test_flow__}")
+        if __test_flow__ == "tf.io.decode_raw":
+            label = tf.io.decode_raw(label, tf.dtypes.uint8)  # label将变成5个单位的Tensor
+            label = tf.reshape(label, [])  # label should be a scalar. 这一步将失败，因为不匹配
+        else:
+            label = tf.strings.to_number(label, tf.dtypes.int32)  # NOTE: uint8 is not acceptable
+        tf.get_logger().info(label)
+        INFO(f"label={label}")  # both logging can be seen in pytest console
+
+
+def test_np_misc(run_legacy=False):
+    import numpy as np
+    # -------------------------------------------------------------------------------------------
+    pass
+
+    # --- Done ----------------------------------------------------------------------------------
+    if run_legacy:
+        # [2020-07-09] probs -> top_k probs
+        np.random.seed(2020)
+        probs = np.random.random((5, 10))
+        INFO(f'probs:{probs}')
+        top_k = 3
+        idxs = np.argsort(probs, axis=-1)  # ascending order..
+        idxs = np.flip(idxs, axis=-1)
+        INFO(f'idxs sorted:{idxs}')
+        idxs = idxs.take(np.arange(top_k), axis=-1)
+        INFO(f'idxs top_k:{idxs}')
+        probs = np.take_along_axis(probs, idxs, axis=-1)  # not np.take()
+        INFO(f'probs (top_k={top_k}):{probs}')
+
+        pass
+

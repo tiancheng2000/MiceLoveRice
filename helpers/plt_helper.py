@@ -56,20 +56,28 @@ def plot_history_mae_mse(history):
 def plot_history_by_metrics(history, metrics=None):
     if metrics is None:
         metrics = ['loss', 'acc', 'precision', 'recall']
-    for n, metric in enumerate(metrics):
+    for metric in metrics.copy():
         if history.history.get(metric, None) is None:
-            continue
+            metrics.remove(metric)
+    import numpy as np
+    num_cols = int(np.sqrt(len(metrics) * 16 / 9))
+    num_rows = int(np.ceil(len(metrics) / num_cols))
+    for n, metric in enumerate(metrics):
+        plt.subplot(num_rows, num_cols, n + 1)
+        is_batch_stats = metric.startswith('batch_')
+        if not is_batch_stats:
+            plt.plot(history.epoch, history.history[metric], label='Train')  # 原文:color=colors[0]?
+            if history.history.get('val_' + metric, None) is not None:
+                plt.plot(history.epoch, history.history['val_' + metric], linestyle="--",
+                         label='Val')  # 原文:color=colors[0]?
+        else:
+            plt.plot(history.history['batch'], history.history[metric], label='Batch')
+        plt.xlabel('Epoch' if not is_batch_stats else 'Batch')
         name = metric.replace("_", " ").capitalize()
-        plt.subplot(2, 2, n + 1)
-        plt.plot(history.epoch, history.history[metric], label='Train')  # 原文:color=colors[0]?
-        if history.history.get('val_' + metric, None) is not None:
-            plt.plot(history.epoch, history.history['val_' + metric], linestyle="--",
-                     label='Val')  # 原文:color=colors[0]?
-        plt.xlabel('Epoch')
         plt.ylabel(name)
-        if metric == 'loss':
+        if metric.endswith('loss'):
             plt.ylim([0, plt.ylim()[1]])
-        elif metric == 'auc':
+        elif metric.endswith('auc'):
             plt.ylim([0.8, 1])
         else:
             plt.ylim([0, 1])
@@ -79,6 +87,9 @@ def plot_history_by_metrics(history, metrics=None):
 
 
 def plot_image_mat(image_mat, text=None, title=None, cell_size: tuple = None, block=None, onlysave_path=None):
+    """
+    NOTE: matlibplot can show both float32 inputs ranged within [0,1] and int inputs.
+    """
     import numpy as np
     if not isinstance(image_mat, np.ndarray):
         raise TypeError(f"image must be a numpy array, instead of a {type(image_mat).__name__}")
@@ -115,6 +126,7 @@ def plot_image_mat(image_mat, text=None, title=None, cell_size: tuple = None, bl
 def plot_images(images, texts=None, title=None, num_rows=None, num_cols=None, cell_size: tuple = None,
                 block=None, onlysave_path=None):
     """
+    NOTE: matlibplot can show both float32 inputs ranged within [0,1] and int inputs.
     :param images: list of ndarrays. dtype is int, 0-255, can be directly rendered
     :param texts:
     :param title: title of the figure, if omitted an auto-inc number will be used
