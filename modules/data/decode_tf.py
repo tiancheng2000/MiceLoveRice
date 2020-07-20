@@ -10,6 +10,7 @@ __all__ = [
 
 # TODO: allow Sequential decode functions
 # TODO: after supporting arbitrary image format, change default encoding in all caller methods from `'jpg'` to `None`
+# TODO: support multiple file paths
 @tf.function
 def decode_image_file(path, encoding=None, colormode=None, reshape: list = None,
                       preserve_aspect_ratio=True, color_transform=None, normalize=True) -> tf.Tensor:
@@ -24,10 +25,11 @@ def decode_image_file(path, encoding=None, colormode=None, reshape: list = None,
     :param normalize:
     :return:
     """
+    tf.print(f"decode_image_file args:{locals()}")
     # it will be automatically utf-8 encoded. tensorflow.org/guide/tensor
     path_t = tf.convert_to_tensor(path) if not isinstance(path, type(tf.constant(""))) else path
     image = tf.io.read_file(path_t, name="decode_image_file.input")
-    # breakpoint()  # NOTE: can debug during tf.function execution (or you can need off decorator and debug eager mode)
+    # breakpoint()  # NOTE: can debug during tf.function execution (or you can turn off decorator and debug eager mode)
     # tf.print("Image", image)  # NOTE: run in execution phase, print real data, and print every time it's called
     # print(image)  # NOTE: will only output 'Tensor("..", shape=..)', and only once, because it's construction phase
 
@@ -78,8 +80,8 @@ def decode_image_file(path, encoding=None, colormode=None, reshape: list = None,
     # if (resize_w is not None and resize_h is not None) \
     #         or (preserve_aspect_ratio and (resize_w, resize_h) != (None, None)):
     if reshape is not None:
-        # NOTE: 记得图像处理、DL领域一直用(height, width, channel)这一顺序
-        _, resize_h, resize_w, _ = reshape
+        # NOTE: 图像处理领域通常用(height, width, channel)这一顺序
+        _, resize_h, resize_w, _ = reshape if reshape[0] == -1 else (None, reshape)
         if preserve_aspect_ratio:
             # IMPROVE: background will be black.. how to customize it (e.g. random bkg, median color)
             image = tf.image.resize_with_pad(image, resize_h, resize_w)

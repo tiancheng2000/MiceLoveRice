@@ -19,6 +19,7 @@ class _DataSignature(enum.Enum):
     TFKerasDataset = ("tf.keras.datasets.load_data", "Name",
                       "mnist, fashion_mnist, boston_housing, imdb, cifar10/100, reuters. "
                       "Result: tuple of numpy array `(x_train, y_train), (x_test, y_test)`")
+    UI_Copy_Files = ("ui_copy_files", "Paths", "listen to ui clipboard event (ctrl+c) to get data")
     UI_Web_Files = ("ui_web_files", "Paths", "listen to ui web event (uploads) to get data")
     # -- TF1.x ---------------------------------------
     LabeledFolders = ("labeled_folders", "Path")
@@ -50,6 +51,18 @@ class DataManager:
         return path
 
     @staticmethod
+    def _process_files(paths, **params_decode):
+        paths = [paths] if not isinstance(paths, list) else paths
+        import modules.data.decode_tf as decode_tf
+        import tensorflow as tf
+        # IMPROVE: accept different kinds of input data
+        data_list = []
+        for path in paths:
+            data_list.append(decode_tf.decode_image_file(tf.convert_to_tensor(path), **params_decode))
+        data_t = tf.data.Dataset.from_tensor_slices(data_list)
+        return data_t
+
+    @staticmethod
     def load_data(data_signature: str, category="all", meta_info=None, **params) -> object:
         """
         :param data_signature:
@@ -64,7 +77,7 @@ class DataManager:
             need_shuffle=False, shuffle_seed=None,
             test_split=0.2,
             decode_x=Params(colormode=None, resize_w=None, resize_h=None, preserve_aspect_ratio=True,
-                            normalize=True, reshape=[]),
+                            normalize=True, reshape=None),
             decode_y=Params()).update_to(params)
         if data_signature == _DataSignature.LabeledFolders.signature:
             params_data = Params(file_exts=['jpg'], labels_ordered_in_train=None).update_to(params_data)
@@ -102,11 +115,19 @@ class DataManager:
             params_decode = Params(encoding='jpg', colormode=None, reshape=None,
                                    preserve_aspect_ratio=True,
                                    color_transform=None, normalize=True).left_join(params_data.decode_x)
-            import modules.data.decode_tf as decode_tf
-            import tensorflow as tf
-            # IMPROVE: accept different kinds of input data
-            data_t = decode_tf.decode_image_file(tf.convert_to_tensor(path), **params_decode)
-            data = tf.data.Dataset.from_tensors(data_t)
+            data = DataManager._process_files(path, **params_decode)
+        elif data_signature == _DataSignature.UI_Copy_Files.signature:
+            params_decode = Params(encoding='jpg', colormode=None, reshape=None,
+                                   preserve_aspect_ratio=True,
+                                   color_transform=None, normalize=True).left_join(params_data.decode_x)
+
+            def _process(event_type, abspath_or_list):
+                INFO(f"clipboard event: path={abspath_or_list}")
+                return DataManager._process_files(abspath_or_list, **params_decode)
+            from helpers.qt5helper import ClipboardMonitor
+            monitor_type = "Path_File" if params_data.format == "Path" else "PathList"
+            data = ClipboardMonitor([monitor_type]).run(_process, True)
+
         elif data_signature == _DataSignature.UI_Web_Files.signature:
             # path = DataManager._validate_path(params_data.path)
             params_decode = Params(encoding='jpg', colormode=None, reshape=None,

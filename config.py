@@ -51,7 +51,7 @@ class Config:
                            '_test_/embedding_distance',  # 2020/03/24
                            'tripletloss/inceptresv2_tlearn33c+tripletloss+miniset(138+3,gray)'  # 2020/03/23
                            ]
-    _ExperimentName = __ExperimentNames__[0]  # <== select an active experiment
+    _ExperimentName = __ExperimentNames__[3]  # <== select an active experiment
 
     @classproperty  # IMPROVE: use class property
     def ExperimentName(self=None) -> str: return Config._ExperimentName
