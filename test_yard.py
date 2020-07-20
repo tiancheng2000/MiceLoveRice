@@ -53,14 +53,15 @@ def test_util_miscs():
         INFO(f"params_none after update_to: {params_none}")
         params_data = Params(
             shuffle=Params(not_existed=None),
-            decode_x=Params(colormode=None, resize_w=None, resize_h=None, preserve_aspect_ratio=True,
-                            normalize=True, reshape=[]))
+            decode_x=Params(colormode=None, normalize=False, reshape=[], not_existed=None))
         # NOTE: (updated) now can check leaf node of param by `is None` after `update_to()`.
         INFO(f"params_data (with `None` value) before update_to: {params_data}")
         params_data.update_to(config_experiment.data_set.data)
-        INFO(f"params_data (with `None` value) after update_to:: {params_data}")
+        INFO(f"params_data (with `None` value) after update_to: {params_data}")
         # INFO(f"  is_defined: {params_data.shuffle.not_existed.is_defined()}")  # <-cannot call is_defined on leaf node
         INFO(f"  is `None`: {params_data.shuffle.not_existed is None}")
+        params_data.left_join(config_experiment.data_set.data)
+        INFO(f"params_data.decode_x after left_join: {params_data.decode_x}")
     elif __test_flow__ == 'data_process':
         dict1 = {'a': 1, 'b': 1, 'c': 1}
         dict2 = {'a': 1, 'b': 2, 'c': 3, 'd': 4}
@@ -333,6 +334,8 @@ def test_main():
                     model = ModelManager.model_train(model, data=(x_train, y_train), **config_experiment.train)
                     eval_metrics = ModelManager.model_evaluate(model, data=(x_test, y_test))
                 if config_experiment.predict.enabled:
+                    if 'meta_info' not in vars():
+                        meta_info = {}  # retrieve meta info from DataManager
                     if x_test is None or y_test is None:  # not config_experiment.train.enabled
                         __test_flow__ = ('use_mnist', 'use_labeled_folders', 'use_config')[2]
                         INFO(f"__test_flow__: {__test_flow__}")  # IMPROVE: wrap as helper tracing class
@@ -347,7 +350,7 @@ def test_main():
                             x_test, y_test = x_test[:test_size], y_test[:test_size]
                         elif __test_flow__ == 'use_labeled_folders':
                             config_data_test: Params = config_experiment.data_set.data_simple_test
-                            meta_info = {}  # retrieve meta info from DataManager
+                            # meta_info = {}  # retrieve meta info from DataManager
                             data = DataManager.load_data(config_data_test.signature,  # category="test", in config
                                                          meta_info=meta_info, **config_data_test)
                             INFO(f"data loaded: {dump_iterable_data(data)}")
@@ -358,27 +361,36 @@ def test_main():
                                 # IMPROVE: unzip the ZipDataset by dataset.map(lambda). Any tf API for unzip?
                                 x_test = tf_obj_to_np_array(data.map(lambda x, y: x))
                                 y_test = tf_obj_to_np_array(data.map(lambda x, y: y))
-                            vocabulary_list = meta_info.get('vocabulary', [])
-                            filenames = meta_info.get('filenames', [])
                         else:
                             data_key = config_experiment.predict.data_inputs.__str__()
                             config_data_test: Params = config_experiment.data_set[data_key]
                             # test signature "ui_web_files", need to keep compatibility with other type of data
-                            data = DataManager.load_data(config_data_test.signature, **config_data_test)
+                            data = DataManager.load_data(config_data_test.signature,
+                                                         meta_info=meta_info, **config_data_test)
                             INFO(f"data loaded: {dump_iterable_data(data)}")
                             import tensorflow as tf
                             from helpers.tf_helper import is_tfdataset
                             if isinstance(data, tf.data.Dataset):
-                                data = data.batch(1)  # IMPROVE: read config `batch_size`
-                                data = data.prefetch(1)
-                            x_test, y_test = data, None
+                                if type(data.element_spec) is tuple:
+                                    # x_test = data.map(lambda x, y: x)
+                                    # y_test = data.map(lambda x, y: y)
+                                    from helpers.tf_helper import tf_obj_to_np_array
+                                    # IMPROVE: unzip the ZipDataset by dataset.map(lambda). Any tf API for unzip?
+                                    x_test = tf_obj_to_np_array(data.map(lambda x, y: x))
+                                    y_test = tf_obj_to_np_array(data.map(lambda x, y: y))
+                                else:
+                                    data = data.batch(1)  # TODO: read config `batch_size` in model_train()
+                                    data = data.prefetch(1)
+                                    x_test, y_test = data, None
                     if model is None:  # not config_experiment.train.enabled
                         config_model: Params = config_experiment.model_set.model_trained
                         model = ModelManager.load_model(config_model.signature, **config_model)
                     predictions = ModelManager.model_predict(model, (x_test, y_test), **config_experiment.predict)
                     if not isinstance(predictions, Iterable):
                         predictions = [predictions]
-                    if 'vocabulary_list' in vars() and 'filenames' in vars():
+                    if 'vocabulary' in meta_info and 'filenames' in meta_info:
+                        vocabulary_list = meta_info.get('vocabulary', [])
+                        filenames = meta_info.get('filenames', [])
                         if y_test is not None:
                             INFO(f"truths: {', '.join(['/'.join([safe_get(vocabulary_list, _), filenames[idx]]) for idx, _ in enumerate(y_test)])}")
                         INFO(f"predictions: {', '.join([safe_get(vocabulary_list, _) for _ in predictions])}")
@@ -428,7 +440,7 @@ def test_data_data_manager():
                                              **config_experiment.data)
         INFO(f"loaded dataset: {ds}")
     else:
-        __test_flow__ = ('labeled_folders', 'mnist_tf_data_to_np_array', 'ui_input_web')[0]
+        __test_flow__ = ('labeled_folders', 'mnist_tf_data_to_np_array', 'ui_web_files', 'ui_copy_files')[3]
         INFO(f'__test_flow__: {__test_flow__}')
         if __test_flow__ == 'labeled_folders':
             Config.ExperimentName = "retrain/inceptresv2+scansnap(6class)"
@@ -480,11 +492,19 @@ def test_data_data_manager():
                     data = tf_obj_to_np_array(data_ds)
                     INFO(f"data (from dataset to list): {dump_iterable_data(data)}")
                 pass
-        elif __test_flow__ == 'ui_input_web':
+        elif __test_flow__ == 'ui_web_files':
             Config.ExperimentName = "tripletloss/inceptresv2_tlearn33c+tripletloss+ykk(5c,251)"
             config_experiment = ConfigSerializer.load(Path.ExperimentConfigAbs)
             from helpers.tf_helper import async_preload_gpu_devices
             async_preload_gpu_devices()
+            from modules.data.data_manager import DataManager
+            config_data_test: Params = config_experiment.data_set.data_ui_test
+            # NOTE: for consistency use the same method for user-interactive data load, but it will be blocking.
+            data = DataManager.load_data(config_data_test.signature, **config_data_test)
+            INFO(f"data loaded: {dump_iterable_data(data)}")
+        elif __test_flow__ == 'ui_copy_files':
+            Config.ExperimentName = "_test_/tf_1x_to_2x_3"
+            config_experiment = ConfigSerializer.load(Path.ExperimentConfigAbs)
             from modules.data.data_manager import DataManager
             config_data_test: Params = config_experiment.data_set.data_ui_test
             # NOTE: for consistency use the same method for user-interactive data load, but it will be blocking.
@@ -896,7 +916,4 @@ def test_np_misc(run_legacy=False):
         idxs = idxs.take(np.arange(top_k), axis=-1)
         INFO(f'idxs top_k:{idxs}')
         probs = np.take_along_axis(probs, idxs, axis=-1)  # not np.take()
-        INFO(f'probs (top_k={top_k}):{probs}')
-
-        pass
-
+  

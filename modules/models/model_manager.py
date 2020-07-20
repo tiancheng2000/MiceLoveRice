@@ -440,10 +440,8 @@ class ModelManager:
                         x_show = x_show.map(denormalize)
                 save_dir, save_paths = None, None
                 if need_to_save:
-                    # from config import __abspath__  <-- relative path is safe
                     save_dir = path_possibly_formatted(params_predict.show_result.save_path)
-                    # save_dir = __abspath__(save_dir) if not osp.isabs(save_dir) else save_dir
-                    save_paths = [osp.join(save_dir, _+'.jpg') for _ in dumps]
+                    # save_paths = [osp.join(save_dir, _+'.jpg') for _ in dumps]
                 if params_predict.show_result.plotter == "matplot":
                     onlysave_path = None
                     if only_save:
@@ -456,8 +454,8 @@ class ModelManager:
                     show_image_mats(x_show, texts=dumps, title="Predictions", onlysave_path=onlysave_path)
                 else:
                     INFO(f"Predictions{'(only diff)' if 'differences' in vars() else ''}: " + ", ".join(dumps))
-                if need_to_save:
-                    save_image_mats(x_show, save_paths)
+                # if need_to_save:
+                #     save_image_mats(x_show, save_paths)
         else:
             top_k = params_predict.show_result.top_k
             INFO(f"Predictions(top{top_k}): {safe_slice(predictions, end=top_k)}")

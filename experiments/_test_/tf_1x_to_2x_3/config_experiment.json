@@ -108,19 +108,19 @@
     },
     "predict": {
         "enabled": true,
-        "async_task": true,
+        "async_task": false,
         "data_inputs": "data_ui_test",
         "decode_prediction": {
             "name": "logits_to_index"
         },
         "show_result": {
             "plotter": "matplot",
-            "only_save": true,
+            "only_save": false,
             "save_path": {
                 "arg_names": ["experiment_path"]
             },
             "top_k": 100,
-            "only_difference": true
+            "only_difference": false
         }
     }
 }

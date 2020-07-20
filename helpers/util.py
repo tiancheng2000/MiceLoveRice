@@ -65,7 +65,7 @@ __all__ = [
     "np_top_k",
     "dict_compare",
     "dict_left_join",
-    "dict_right_join",
+    "dict_cross_join",
     "dict_update",
     "indices_in_vocabulary_list",
     "safe_get",
@@ -364,22 +364,33 @@ class Params(dict):
         :param other:
         :param key_map: dict of key_left -> key_right, for key translation
         """
-        for key in self.keys():
-            if key_map is not None and key in key_map:
-                key_right = key_map.get(key)  # key translation
+        other = other.copy()
+        others = others.copy()
+        key_map = {} if key_map is None else key_map
+        for key, value in self.items():
+            # 1.key translation and replace mapped keys of other and others
+            key_right = key_map.get(key, None)
+            if key_right in other and key not in other:
+                other[key] = other[key_right]
+                del other[key_right]
+            if key_right in others and key not in others:
+                others[key] = others[key_right]
+                del others[key_right]
+            value_in_other = other.get(key, None)
+            value_in_others = others.get(key, None)
+            # 2.recursively update if node is a Params object
+            if isinstance(value, self.__class__):
+                value.left_join(value_in_other or {}, key_map, **(value_in_others or {}))
+                self[key] = value
             else:
-                key_right = key
-            if key in others:
-                self.__setitem__(key, others.get(key))
-            elif key_right in others:
-                self.__setitem__(key, others.get(key_right))
-            elif key in other:
-                self.__setitem__(key, other.get(key))
-            elif key_right in other:
-                self.__setitem__(key, other.get(key_right))
+                if value_in_others is not None:
+                    self[key] = value_in_others
+                elif value_in_other is not None:
+                    self[key] = value_in_other
         return self
 
-    def right_join(self, other: dict, key_map: dict = None, **others):
+    # TODO: support recursive processing, like left_join
+    def cross_join(self, other: dict, key_map: dict = None, **others):
         """
         Similar to `update_to()` except that only keys defined in both sides
         will have their values updated. Those not defined in right side will be deleted.
@@ -414,10 +425,10 @@ class Params(dict):
         for key, value in self.items():
             # 1.key translation and replace mapped keys of other and others
             key_right = key_map.get(key, None)
-            if key_right in other:
+            if key_right in other and key not in other:
                 other[key] = other[key_right]
                 del other[key_right]
-            if key_right in others:
+            if key_right in others and key not in others:
                 others[key] = others[key_right]
                 del others[key_right]
             # 2.recursively update if node is a Params object
@@ -548,7 +559,7 @@ def ensure_web_app():
     from config import Path, __abspath__
     import os.path as osp
     config_deploy = ConfigSerializer.load(Path.DeployConfigAbs)
-    params_webapp = Params(upload_folder=None).right_join(config_deploy.web)
+    params_webapp = Params(upload_folder=None).cross_join(config_deploy.web)
     # NOTE: relative path should relate to project root, not webapp's
     if not osp.isabs(params_webapp.upload_folder):
         params_webapp.upload_folder = __abspath__(params_webapp.upload_folder)
@@ -977,22 +988,33 @@ def dict_left_join(self, other: dict, key_map: dict = None, **others):
     :param other:
     :param key_map: dict of key_left -> key_right, for key translation
     """
-    for key in self.keys():
-        if key_map is not None and key in key_map:
-            key_right = key_map.get(key)  # key translation
+    other = other.copy()
+    others = others.copy()
+    key_map = {} if key_map is None else key_map
+    for key, value in self.items():
+        # 1.key translation and replace mapped keys of other and others
+        key_right = key_map.get(key, None)
+        if key_right in other and key not in other:
+            other[key] = other[key_right]
+            del other[key_right]
+        if key_right in others and key not in others:
+            others[key] = others[key_right]
+            del others[key_right]
+        value_in_other = other.get(key, None)
+        value_in_others = others.get(key, None)
+        # 2.recursively update if node is a Params object
+        if isinstance(value, self.__class__):
+            value.left_join(value_in_other or {}, key_map, **(value_in_others or {}))
+            self[key] = value
         else:
-            key_right = key
-        if key in others:
-            self.__setitem__(key, others.get(key))
-        elif key_right in others:
-            self.__setitem__(key, others.get(key_right))
-        elif key in other:
-            self.__setitem__(key, other.get(key))
-        elif key_right in other:
-            self.__setitem__(key, other.get(key_right))
+            if value_in_others is not None:
+                self[key] = value_in_others
+            elif value_in_other is not None:
+                self[key] = value_in_other
     return self
 
-def dict_right_join(self, other: dict, key_map: dict = None, **others):
+
+def dict_cross_join(self, other: dict, key_map: dict = None, **others):
     """
     Similar to `update_to()` except that only keys defined in both sides
     will have their values updated. Those not defined in right side will be deleted.
@@ -1028,10 +1050,10 @@ def dict_update(self, other: dict, key_map: dict = None, **others):
     for key, value in self.items():
         # 1.key translation and replace mapped keys of other and others
         key_right = key_map.get(key, None)
-        if key_right in other:
+        if key_right in other and key not in other:
             other[key] = other[key_right]
             del other[key_right]
-        if key_right in others:
+        if key_right in others and key not in others:
             others[key] = others[key_right]
             del others[key_right]
         # 2.recursively update if node is a Params object
