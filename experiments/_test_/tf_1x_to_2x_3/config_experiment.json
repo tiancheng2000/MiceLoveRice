@@ -14,7 +14,7 @@
             "signature": "keras.models.load_model",
             "format": "SavedModelFile",
             "path": {
-                "format": "{}/model_trained.tf",
+                "format": "{}/model_trained",
                 "arg_names": ["experiment_path"]
             }
         }
@@ -24,6 +24,7 @@
             "name": "mnist",
             "signature": "tf.keras.datasets.load_data",
             "format": "Name",
+            "category": "all",
             "decode_x": {
                 "normalize": true,
                 "reshape": [-1, 28, 28, 1]
@@ -54,34 +55,12 @@
                 "encoding": "jpg",
                 "colormode": "grayscale"
             }
-        },
-        "data_ui_test": {
-            "description": "listen to ui event and accept data",
-            "signature": "ui_copy_files",
-            "format": "Paths",
-            "decode_x": {
-                "name": "decode_image_file",
-                "colormode": "grayscale",
-                "color_transform": "complementary",
-                "normalize": true
-            }
-        },
-        "data_ui_test2": {
-            "description": "listen to ui event and accept data",
-            "signature": "ui_web_files",
-            "format": "Paths",
-            "decode_x": {
-                "name": "decode_image_file",
-                "colormode": "grayscale",
-                "color_transform": "complementary",
-                "normalize": true
-            }
         }
     },
     "train": {
-        "enabled": false,
+        "enabled": true,
         "validation_split": 0.2,
-        "epochs": 5,
+        "epochs": 3,
         "batch_size": 48,
         "checkpoint": {
             "signature": "tf.keras.Model.load_weights",
@@ -108,18 +87,17 @@
     },
     "predict": {
         "enabled": true,
-        "async_task": false,
-        "data_inputs": "data_ui_test",
+        "data_inputs": "data_simple_test",
         "decode_prediction": {
             "name": "logits_to_index"
         },
         "show_result": {
-            "plotter": "matplot",
+            "plotter": "",
             "only_save": false,
             "save_path": {
                 "arg_names": ["experiment_path"]
             },
-            "top_k": 100,
+            "top_k": 48,
             "only_difference": false
         }
     }

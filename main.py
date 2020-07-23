@@ -41,11 +41,47 @@ def main(*args, **kwargs):
 
     if config_experiment.train.enabled:
         INFO('--- Training begins ---------')
+        config_data: Params = config_experiment.data_set.data
+        data = DataManager.load_data(config_data.signature, **config_data)
+        INFO(f"data loaded: {dump_iterable_data(data)}")
+        if not isinstance(data, tuple) or any(not isinstance(_, tuple) for _ in data):
+            raise ValueError("data loaded must be in type of ((x_train, y_train), (x_test, y_test))")
+        (x_train, y_train), (x_test, y_test) = data  # unpack: tuple of 4 np.ndarrays
+        # e.g.((60000,28,28), (60000,)), ((10000,28,28), (10000,))
+
+        config_model: Params = config_experiment.model_set.model_base
+        model = ModelManager.load_model(config_model.signature, **config_model)
+        model = ModelManager.model_train(model, data=(x_train, y_train), **config_experiment.train)
+        eval_metrics = ModelManager.model_evaluate(model, data=(x_test, y_test))
+
     else:
         INFO('--- Training was disabled ---------')
 
     if config_experiment.predict.enabled:
         INFO('--- Prediction begins ---------')
+        if 'meta_info' not in vars():
+            meta_info = {}  # retrieve meta info from DataManager
+        if x_test is None or y_test is None:  # not config_experiment.train.enabled
+            data_key = config_experiment.predict.data_inputs.__str__()
+            config_data_test: Params = config_experiment.data_set[data_key]
+            # test signature "ui_web_files", need to keep compatibility with other type of data
+            data = DataManager.load_data(config_data_test.signature,
+                                         meta_info=meta_info, **config_data_test)
+            INFO(f"data loaded: {dump_iterable_data(data)}")
+            import tensorflow as tf
+            from helpers.tf_helper import is_tfdataset
+            if isinstance(data, tf.data.Dataset):
+                if type(data.element_spec) is tuple:
+                    # x_test = data.map(lambda x, y: x)
+                    # y_test = data.map(lambda x, y: y)
+                    from helpers.tf_helper import tf_obj_to_np_array
+                    # IMPROVE: unzip the ZipDataset by dataset.map(lambda). Any tf API for unzip?
+                    x_test = tf_obj_to_np_array(data.map(lambda x, y: x))
+                    y_test = tf_obj_to_np_array(data.map(lambda x, y: y))
+                else:
+                    data = data.batch(1)  # TODO: read config `batch_size` in model_train()
+                    data = data.prefetch(1)
+                    x_test, y_test = data, None
 
         if model is None:  # not config_experiment.train.enabled
             config_model: Params = config_experiment.model_set.model_trained
@@ -54,6 +90,8 @@ def main(*args, **kwargs):
             model = ModelManager.load_model(config_model.signature, **config_model)
 
         predictions = ModelManager.model_predict(model, (x_test, y_test), **config_experiment.predict)
+        if not isinstance(predictions, Iterable):
+            predictions = [predictions]
 
         INFO(f"predictions: {', '.join([str(_) for _ in predictions])}")
     else:
