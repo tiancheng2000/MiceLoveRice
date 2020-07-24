@@ -28,8 +28,11 @@ def main(*args, **kwargs):
     INFO('--- Experiment begins: {}---------------'.format(Config.ExperimentName))
     config_experiment = ConfigSerializer.load(Path.ExperimentConfigAbs)
 
-    from helpers.tf_helper import async_preload_gpu_devices
-    async_preload_gpu_devices()
+    init_logging(VerbosityLevel.DEBUG)
+
+    # uncomment this if you want to load gpu asynchronically. NOTE: code will freeze at the following steps
+    # from helpers.tf_helper import async_preload_gpu_devices
+    # async_preload_gpu_devices()
 
     # TODO: explain terms or key concepts in comments, ref: overlook.vsd
     from modules.data.data_manager import DataManager
@@ -85,7 +88,7 @@ def main(*args, **kwargs):
 
         if model is None:  # not config_experiment.train.enabled
             config_model: Params = config_experiment.model_set.model_trained
-            if config_model.is_defined():
+            if not config_model.is_defined():
                 raise ValueError('Config error: `model_trained` node is not defined')
             model = ModelManager.load_model(config_model.signature, **config_model)
 

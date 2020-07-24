@@ -88,7 +88,7 @@ def plot_history_by_metrics(history, metrics=None):
 
 def plot_image_mat(image_mat, text=None, title=None, cell_size: tuple = None, block=None, onlysave_path=None):
     """
-    NOTE: matlibplot can show both float32 inputs ranged within [0,1] and int inputs.
+    NOTE: matlibplot can show either float32 inputs ranged within [0,1] or int inputs.
     """
     import numpy as np
     if not isinstance(image_mat, np.ndarray):
@@ -126,7 +126,7 @@ def plot_image_mat(image_mat, text=None, title=None, cell_size: tuple = None, bl
 def plot_images(images, texts=None, title=None, num_rows=None, num_cols=None, cell_size: tuple = None,
                 block=None, onlysave_path=None):
     """
-    NOTE: matlibplot can show both float32 inputs ranged within [0,1] and int inputs.
+    NOTE: matlibplot can show either float32 inputs ranged within [0,1] or int inputs.
     :param images: list of ndarrays. dtype is int, 0-255, can be directly rendered
     :param texts:
     :param title: title of the figure, if omitted an auto-inc number will be used

@@ -37,7 +37,7 @@ def test_util_logging():
     print("print message here")  # print() should be replaced by logging func, it cannot be captured by pytest
 
 def test_util_miscs():
-    __test_flow__ = ('Params', 'data_process', 'image_mat')[0]
+    __test_flow__ = ('Params', 'data_process', 'image_mat')[2]
     INFO(f"__test_flow__: {__test_flow__}")
     if __test_flow__ == 'Params':
         config_experiment = ConfigSerializer.load(Path.ExperimentConfigAbs)
@@ -70,9 +70,11 @@ def test_util_miscs():
     elif __test_flow__ == 'image_mat':
         image_path = Config.QuickTest.GrayscaleImagePath  # InputImagePath
         image_mat = load_image_mat(image_path)
-        __test_flow__ = ('blocking_show_and_save', 'nonblocking_show')[1]
+        __test_flow__ = ('blocking_show_and_save', 'nonblocking_show')[0]
         INFO(f"__test_flow__: {__test_flow__}")
         if __test_flow__ == 'blocking_show_and_save':
+            # import matplotlib.pyplot as plt
+            # plt.ioff()
             fig = show_image_mat(image_mat)
             save_image_mat(image_mat, get_new_name_if_exists(image_path))
             save_image_mat(image_mat, get_new_name_if_exists(image_path))

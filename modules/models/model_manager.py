@@ -4,13 +4,13 @@ import os.path as osp
 from helpers.util import DEBUG, INFO, WARN, ERROR, Params, safe_get_len, ensure_dir_exists, path_possibly_formatted, \
     show_image_mats, save_image_mats, safe_slice, np_top_k
 
+from helpers import tf_helper
+# TODO: move this to member functions, when supporting frameworks other than TF.
+# tf_helper.preload_gpu_devices()
+
 __all__ = [
     "ModelManager",
 ]
-
-# TODO: move this to member functions, when supporting frameworks other than TF.
-from helpers.tf_helper import preload_gpu_devices
-preload_gpu_devices()
 
 class _ModelSignature(enum.Enum):
     """
@@ -215,6 +215,7 @@ class ModelManager:
         x_train, y_train = ModelManager._validate_input(data)
 
         import tensorflow as tf   # IMPROVE: check availability of ml backends
+        tf_helper.preload_gpu_devices()
         if isinstance(model, tf.keras.Model):
             # 1.compile and load variables from checkpoint
             model.compile(**params_train.fromkeys(['optimizer', 'loss', 'metrics']))
@@ -328,6 +329,7 @@ class ModelManager:
         x_test, y_test = ModelManager._validate_input(data)
 
         import tensorflow as tf   # IMPROVE: check availability of ml backends
+        tf_helper.preload_gpu_devices()
         if isinstance(model, tf.keras.Model):
             # NOTE: core API for model evaluation
             eval_metrics = model.evaluate(x_test, y_test)
@@ -347,6 +349,7 @@ class ModelManager:
 
         import numpy as np
         import tensorflow as tf  # IMPROVE: check availability of ml backends
+        tf_helper.preload_gpu_devices()
         # wrapper for different model types
         def _predict(inputs):
             # NOTE: core API for prediction
