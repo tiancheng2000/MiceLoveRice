@@ -144,8 +144,8 @@ class DataManager:
 
             @track_entry_and_exit.coro()
             async def coro_consume_files(abspath_or_list, cbs):
-                nonlocal this_task
-                assert this_task is not None, '`this_task` should have been assigned before entering related coro.'
+                # nonlocal this_task
+                # assert this_task is not None, '`this_task` should have been assigned before entering related coro.'
 
                 import modules.data.decode_tf as decode_tf
                 import tensorflow as tf
@@ -162,9 +162,9 @@ class DataManager:
                     return decode_tf.decode_image_file(path_t, **params_decode)
 
                 data = tf.data.Dataset.from_tensor_slices(filepaths)
-                this_task.progress = 0.5
+                # this_task.progress = 0.5
                 data = data.map(map_path_to_image)
-                this_task.progress = 1.0
+                # this_task.progress = 1.0
                 result.update({'data': data})
                 # # if show inputs
                 # try:
