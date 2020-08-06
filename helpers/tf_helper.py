@@ -19,21 +19,29 @@ __all__ = [
 
 __preloaded_gpu___ = False
 
-def preload_gpu_devices():
+def preload_gpu_devices(active_indexes: list = None, memory_limit: int = None):
     global __preloaded_gpu___
     if __preloaded_gpu___:
         return
     import tensorflow as tf
     gpus = tf.config.experimental.list_physical_devices('GPU')
+
     __preloaded_gpu___ = True
     if gpus:
-        # Restrict TensorFlow to only use the first GPU
         try:
-            tf.config.experimental.set_memory_growth(gpus[0], True)
-            INFO("Physical GPU Memory Growth is turned ON.")
-            tf.config.experimental.set_visible_devices(gpus[0], 'GPU')
+            if active_indexes is not None:
+                for index in active_indexes:
+                    tf.config.experimental.set_visible_devices(gpus[index], 'GPU')
             logical_gpus = tf.config.experimental.list_logical_devices('GPU')
-            INFO(f"Num of Physical GPUs: {len(gpus)}, Num of Logical GPU: {len(logical_gpus)}")
+            INFO(f"Num of Physical GPU vs Logical ones: {len(gpus)} vs {len(logical_gpus)}, "
+                 f"{len(gpus)-len(logical_gpus)} disabled")
+            if memory_limit is None:
+                tf.config.experimental.set_memory_growth(gpus[0], True)
+                INFO("Physical GPU Memory Growth is turned ON.")
+            else:
+                tf.config.experimental.set_virtual_device_configuration(gpus[0], [
+                    tf.config.experimental.VirtualDeviceConfiguration(memory_limit=memory_limit)])
+                INFO(f"Physical GPU Memory Growth is limited under: {memory_limit}")
         except RuntimeError as e:
             # Visible devices must be set before GPUs have been initialized
             ERROR(f"Exception during preload_gpu_devices: {e}")
