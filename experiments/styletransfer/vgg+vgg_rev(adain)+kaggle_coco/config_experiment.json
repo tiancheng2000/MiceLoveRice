@@ -1,0 +1,151 @@
+{
+    "description": "Transfer Learning to classify photos of Scansnap(@PFU) scanner",
+    "__BaseModelParams__": [
+        {"name": "", "signature": ""}
+    ],
+    "model_set": {
+        "model_base": {
+            "description": "recommended input_shape=[-1,299,299,3]. model can be `feature_vector` or `classification`",
+            "name": "inception_resnet_v2",
+            "signature": "tf_hub.KerasLayer",
+            "format": "SavedModelDir",
+            "path": "/tmp/models/inception_resnet_v2/feature_vector/4",
+            "input_shape": [-1, 299, 299, 3],
+            "trainable": false
+        },
+        "model_append": {
+            "description": "[note] input_shape will be ignored in dynamic mode",
+            "name": "dense-dense_softmax",
+            "signature": "keras.Sequential",
+            "format": "Name",
+            "input_shape": [-1, 1536],
+            "embedding_size": 504,
+            "class_count": 6
+        },
+        "model_enc": {
+            "signature": "tl.models.Model",
+            "format": "ClassName+Weights",
+            "module_name": "modules.models.tensorlayer.vgg",
+            "method_name": "vgg19",
+            "weights_path": {
+                "format": "experiments/{}/predefined_vgg19_endwith(conv4_1)_weights.h5",
+                "arg_names": ["experiment_name"]
+            }
+        },
+        "model_dec": {
+            "signature": "tl.models.Model",
+            "format": "ClassName+Weights",
+            "module_name": "modules.models.tensorlayer.vgg",
+            "method_name" : "vgg19_rev",
+            "weights_path": {
+                "format": "experiments/{}/dec_34700(loss=427986048.00)_weights.h5",
+                "arg_names": ["experiment_name"]
+            }
+        }
+    },
+    "data_set": {
+        "data": {
+            "name": "scansnap(6class)",
+            "signature": "labeled_folders",
+            "format": "Path",
+            "path": "data/_uploads/0_00001.jpg",
+            "labels_ordered_in_train": ["cloud","ix100","ix500","s1100","s1300","sv600"],
+            "need_shuffle": true,
+            "shuffle_seed": 2020,
+            "test_split": 0,
+            "decode_x": {
+                "name": "decode_image_file",
+                "encoding": "jpg",
+                "normalize": true,
+                "reshape": [-1, 299, 299, 1]
+            }
+        },
+        "data_ui_test": {
+            "description": "listen to ui event to accept data",
+            "signature": "ui_web_files",
+            "format": "Paths",
+            "decode_x": {
+                "name": "decode_image_file",
+                "encoding": "jpg",
+                "normalize": false
+            }
+        }
+    },
+    "train": {
+        "enabled": false,
+        "data_inputs": "data_ui_test",
+        "validation_split": 0.1,
+        "epochs": 2,
+        "batch_size": 16,
+        "loss": "sparse_categorical_crossentropy",
+        "collect_batch_stats": true,
+        "checkpoint": {
+            "signature": "tf.keras.Model.load_weights",
+            "format": "CKPT_dir",
+            "path": {
+                "arg_names": ["experiment_path"]
+            },
+            "load_weights": "latest",
+            "save_weights": {
+                "frequency": "epoch"
+            }
+        },
+        "early_stop": {
+            "monitor": "val_loss",
+            "patience": 10
+        },
+        "save_model": {
+            "format": "SavedModel"
+        },
+        "show_result": {
+            "plotter": "matplot",
+            "metrics": ["loss", "acc", "precision", "recall", "batch_loss", "batch_acc"]
+        }
+    },
+    "predict": {
+        "if_result": false,
+        "enabled": true,
+        "async_task": true,
+        "data_inputs": "data_ui_test",
+        "decode_prediction": null,
+        "input_num": 1,
+        "show_result": {
+            "description": "note: `top_k` only slices predictions, doesn't slice inside every prediction",
+            "plotter": "matplot",
+            "only_save": true,
+            "inputs_type": "images",
+            "outputs_type": "label_indexes",
+            "save_path": {
+                "arg_names": ["experiment_path"]
+            },
+            "top_k": 100,
+            "only_difference": true
+        }
+    },
+    "predict_enc": {
+        "if_result": false,
+        "enabled": true,
+        "decode_prediction": null,
+        "input_num": 1,
+        "show_result": null
+    },
+    "predict_dec": {
+        "if_result": false,
+        "enabled": true,
+        "decode_prediction": null,
+        "input_num": 1,
+        "show_result": {
+            "description": "note: `top_k` only slices predictions, doesn't slice inside every prediction",
+            "plotter": "matplot",
+            "only_save": true,
+            "inputs_type": "feature",
+            "outputs_type": "image",
+            "save_path": {
+                "arg_names": ["experiment_path"]
+            },
+            "top_k": 100,
+            "only_difference": true
+        }
+    }
+}
+
