@@ -350,23 +350,27 @@ class Params(dict):
         NOTE: only use this checking a :class:`Params` node. For leaf nodes (str, list)
           :func:`__len__()` or `isinstance(node, type)` is suggested
         """
-        return len(self) > 0
+        # TODO: important logic change! regression test required (2020/08/07)
+        # return len(self) > 0
+        return self is self.__class__._key_missed_value
 
     def get(self, key, *args):
         # deprecated: return super(Params, self).get(key, default if default is not None else {})
         default = args[0] if len(args) > 0 else Params._key_missed_value
         return super(self.__class__, self).get(key, default)
 
-    def left_join(self, other: dict, key_map: dict = None, **others):
+    def left_join(self, other: dict, key_map: dict = None, _cross_join=False, **others):
         """
         Similar to `update_to()` except that only keys defined in left sides (this instance)
         will have their values updated. No extra key-value pairs will be appended.
         :param other:
         :param key_map: dict of key_left -> key_right, for key translation
+        :param _cross_join: only internally used by cross_join()
         """
-        other = other.copy() if other else None
-        others = others.copy() if other else None
-        key_map = {} if key_map is None else key_map
+        other = other.copy() if other else {}
+        others = others.copy() if other else {}
+        key_map = key_map if key_map else {}
+        to_delete = []
         for key, value in self.items():
             # 1.key translation and replace mapped keys of other and others
             key_right = key_map.get(key, None)
@@ -376,20 +380,34 @@ class Params(dict):
             if key_right in others and key not in others:
                 others[key] = others[key_right]
                 del others[key_right]
-            value_in_other = other.get(key, None)
-            value_in_others = others.get(key, None)
+            key_missed_value = self.__class__._key_missed_value
+            value_in_other = other.get(key, key_missed_value)
+            value_in_others = others.get(key, key_missed_value)
             # 2.recursively update if node is a Params object
             if isinstance(value, self.__class__):
-                value.left_join(value_in_other or {}, key_map, **(value_in_others or {}))
-                self[key] = value
+                if (value_in_other, value_in_others) == (None, None):
+                    to_delete.append(key)  # FD: 'key: null' in right side => clear left side => .is_defined()==False
+                else:
+                    if not all(_ is None or _ is key_missed_value for _ in (value_in_other, value_in_others)):
+                        value.left_join(value_in_other or {}, key_map, _cross_join, **(value_in_others or {}))
+                        self[key] = value
+                    else:
+                        if not _cross_join:
+                            pass  # FD: `undefined` in right side => keep left side unchanged
+                        else:
+                            to_delete.append(key)  # if cross_join, remove
             else:
-                if value_in_others is not None:
+                # FD: overwrite left side even if right side is 'key: null', unless right side is `undefined`
+                if value_in_others is not key_missed_value:
                     self[key] = value_in_others
-                elif value_in_other is not None:
+                elif value_in_other is not key_missed_value:
                     self[key] = value_in_other
+                elif _cross_join:
+                    to_delete.append(key)  # if cross_join, remove
+        for key in to_delete:
+            self.__delitem__(key)
         return self
 
-    # TODO: support recursive processing, like left_join
     def cross_join(self, other: dict, key_map: dict = None, **others):
         """
         Similar to `update_to()` except that only keys defined in both sides
@@ -397,31 +415,14 @@ class Params(dict):
         :param other:
         :param key_map: dict of key_left -> key_right, for key translation
         """
-        to_delete = []
-        for key in self.keys():
-            if key_map is not None and key in key_map:
-                key_right = key_map.get(key)  # key translation
-            else:
-                key_right = key
-            if key in others:
-                self.__setitem__(key, others.get(key))
-            elif key_right in others:
-                self.__setitem__(key, others.get(key_right))
-            elif key in other:
-                self.__setitem__(key, other.get(key))
-            elif key_right in other:
-                self.__setitem__(key, other.get(key_right))
-            else:
-                to_delete.append(key)
-        for key in to_delete:
-            self.__delitem__(key)
-        return self
+        return self.left_join(other, key_map, _cross_join=True, **others)
 
     def update(self, other: dict, key_map: dict = None, **others):
         # NOTE: dict.update() always returns `None`, so should not be used in assignment
         other = other.copy() if other else {}
         others = others.copy() if others else {}
-        key_map = {} if key_map is None else key_map
+        key_map = key_map if key_map else {}
+        to_delete = []
         for key, value in self.items():
             # 1.key translation and replace mapped keys of other and others
             key_right = key_map.get(key, None)
@@ -433,31 +434,24 @@ class Params(dict):
                 del others[key_right]
             # 2.recursively update if node is a Params object
             if isinstance(value, self.__class__):
-                value_in_other = other[key] if key in other else {}
-                value_in_others = others[key] if key in others else {}
-                value.update(value_in_other, key_map, **value_in_others)
-                self[key] = value
-                if key in other:
-                    del other[key]
-                if key in others:
-                    del others[key]
+                # NOTE: distinguish intentionally defined as 'key: null' with `undefined`
+                key_missed_value = self.__class__._key_missed_value
+                value_in_other = other.get(key, key_missed_value)
+                value_in_others = others.get(key, key_missed_value)
+                if (value_in_other, value_in_others) == (None, None):
+                    to_delete.append(key)  # FD: 'key: null' in right side => clear left side
+                else:
+                    if not all(_ is None or _ is key_missed_value for _ in (value_in_other, value_in_others)):
+                        value.update(value_in_other, key_map, **value_in_others)
+                        self[key] = value
+                        if key in other:
+                            del other[key]
+                        if key in others:
+                            del others[key]
+        for key in to_delete:
+            self.__delitem__(key)
         super(self.__class__, self).update(other, **others)
         return None  # always return `None` as dict's behavior
-
-    # -- deprecated --
-    def update_v1(self, other: dict, key_map: dict = None, **others):
-        # NOTE: dict.update() always returns `None`, so should not be used in assignment
-        if key_map is not None:
-            other = other.copy()
-            others = others.copy()
-            for key_left, key_right in key_map.items():
-                if key_right in other:
-                    other.__setitem__(key_left, other.get(key_right))
-                    del other[key_right]
-                if key_right in others:
-                    others.__setitem__(key_left, others.get(key_right))
-                    del others[key_right]
-        return super(self.__class__, self).update(other, **others)  # always return `None` as dict's behavior
 
     def update_to(self, other: dict, key_map: dict = None, **others):
         """
@@ -980,17 +974,19 @@ def dict_compare(before, after):
             changed[k] = v
     return new, changed
 
-def dict_left_join(self, other: dict, key_map: dict = None, **others):
+def dict_left_join(self, other: dict, key_map: dict = None, _cross_join=False, **others):
     """
     Similar to `update_to()` except that only keys defined in left sides (this instance)
     will have their values updated. No extra key-value pairs will be appended.
     :param self:
     :param other:
     :param key_map: dict of key_left -> key_right, for key translation
+    :param _cross_join: only internally used by dict_cross_join()
     """
-    other = other.copy()
-    others = others.copy()
-    key_map = {} if key_map is None else key_map
+    other = other.copy() if other else {}
+    others = others.copy() if other else {}
+    key_map = key_map if key_map else {}
+    to_delete = []
     for key, value in self.items():
         # 1.key translation and replace mapped keys of other and others
         key_right = key_map.get(key, None)
@@ -1000,17 +996,30 @@ def dict_left_join(self, other: dict, key_map: dict = None, **others):
         if key_right in others and key not in others:
             others[key] = others[key_right]
             del others[key_right]
-        value_in_other = other.get(key, None)
-        value_in_others = others.get(key, None)
+        key_missed_value = {}
+        value_in_other = other.get(key, key_missed_value)
+        value_in_others = others.get(key, key_missed_value)
         # 2.recursively update if node is a Params object
         if isinstance(value, self.__class__):
-            value.left_join(value_in_other or {}, key_map, **(value_in_others or {}))
-            self[key] = value
+            if (value_in_other, value_in_others) == (None, None):
+                to_delete.append(key)  # FD: 'key: null' in right side => clear left side => .is_defined()==False
+            else:
+                if not all(_ is None or _ is key_missed_value for _ in (value_in_other, value_in_others)):
+                    value.left_join(value_in_other or {}, key_map, _cross_join, **(value_in_others or {}))
+                    self[key] = value
+                else:
+                    if not _cross_join:
+                        pass  # FD: `undefined` in right side => keep left side unchanged
+                    else:
+                        to_delete.append(key)  # if cross_join, remove
         else:
-            if value_in_others is not None:
+            # FD: overwrite left side even if right side is 'key: null', unless right side is `undefined`
+            if value_in_others is not key_missed_value:
                 self[key] = value_in_others
-            elif value_in_other is not None:
+            elif value_in_other is not key_missed_value:
                 self[key] = value_in_other
+            elif _cross_join:
+                to_delete.append(key)  # if cross_join, remove
     return self
 
 
@@ -1022,31 +1031,14 @@ def dict_cross_join(self, other: dict, key_map: dict = None, **others):
     :param other:
     :param key_map: dict of key_left -> key_right, for key translation
     """
-    to_delete = []
-    for key in self.keys():
-        if key_map is not None and key in key_map:
-            key_right = key_map.get(key)  # key translation
-        else:
-            key_right = key
-        if key in others:
-            self.__setitem__(key, others.get(key))
-        elif key_right in others:
-            self.__setitem__(key, others.get(key_right))
-        elif key in other:
-            self.__setitem__(key, other.get(key))
-        elif key_right in other:
-            self.__setitem__(key, other.get(key_right))
-        else:
-            to_delete.append(key)
-    for key in to_delete:
-        self.__delitem__(key)
-    return self
+    return dict_left_join(self, other, key_map, _cross_join=True, **others)
+
 
 def dict_update(self, other: dict, key_map: dict = None, **others):
-    # NOTE: dict.update() always returns `None`, so should not be used in assignment
-    other = other.copy()
-    others = others.copy()
-    key_map = {} if key_map is None else key_map
+    other = other.copy() if other else {}
+    others = others.copy() if others else {}
+    key_map = key_map if key_map else {}
+    to_delete = []
     for key, value in self.items():
         # 1.key translation and replace mapped keys of other and others
         key_right = key_map.get(key, None)
@@ -1058,16 +1050,25 @@ def dict_update(self, other: dict, key_map: dict = None, **others):
             del others[key_right]
         # 2.recursively update if node is a Params object
         if isinstance(value, self.__class__):
-            value_in_other = other[key] if key in other else {}
-            value_in_others = others[key] if key in others else {}
-            value.update(value_in_other, key_map, **value_in_others)
-            self[key] = value
-            if key in other:
-                del other[key]
-            if key in others:
-                del others[key]
+            # NOTE: distinguish intentionally defined as 'key: null' with `undefined`
+            key_missed_value = self.__class__._key_missed_value
+            value_in_other = other.get(key, key_missed_value)
+            value_in_others = others.get(key, key_missed_value)
+            if (value_in_other, value_in_others) == (None, None):
+                to_delete.append(key)  # FD: 'key: null' in right side => clear left side
+            else:
+                if not all(_ is None or _ is key_missed_value for _ in (value_in_other, value_in_others)):
+                    value.update(value_in_other, key_map, **value_in_others)
+                    self[key] = value
+                    if key in other:
+                        del other[key]
+                    if key in others:
+                        del others[key]
+    for key in to_delete:
+        self.__delitem__(key)
     self.update(other, **others)
     return None  # always return `None` as dict's behavior
+
 
 def dict_fromkeys(self, keys: Iterable[str], key_map: Dict[str, str] = None) -> Dict[str, Any]:
     """
