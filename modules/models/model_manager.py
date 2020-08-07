@@ -1,8 +1,8 @@
 import enum
 import os.path as osp
 
-from helpers.util import DEBUG, INFO, WARN, ERROR, Params, safe_get_len, ensure_dir_exists, path_possibly_formatted, \
-    show_image_mats, save_image_mats, safe_slice, np_top_k
+from helpers.util import DEBUG, INFO, WARN, Params, safe_get_len, ensure_dir_exists, path_possibly_formatted, \
+    show_image_mats, safe_slice, np_top_k, safe_import_module
 
 __all__ = [
     "ModelManager",
@@ -18,6 +18,7 @@ class _ModelSignature(enum.Enum):
     Model与weights/variables可能分开 e.g.Keras支持Model.load_weights('h5'或'ckpt')和models.load_model/model_from_json
     """
     # -- TF2.x ---------------------------------------
+    TLDyamicModel = ("tl.models.Model", "ModelFunc", "Instantiate a dynamic or static model of TensorLayer")
     TFSavedModel = ("tf.saved_model.load", "SavedModelDir", "Downloaded KerasApplications e.g.`inception_resnet_v2/3`")
     KerasSequential = ("keras.Sequential", "[Name, Config]", "Predefined sequential model, or by configuration")
     KerasFunctional = ("keras.Model", "Name", "Predefined model by specifying `inputs` and `outputs`, or subclassing")
@@ -67,7 +68,7 @@ class ModelManager:
 
         import numpy as np
         import tensorflow as tf   # IMPROVE: check availability of ml backends
-        allowed_types = (np.ndarray, tf.data.Dataset, tf.Tensor)
+        allowed_types = (np.ndarray, tf.data.Dataset, tf.Tensor, list)
         if not isinstance(x, allowed_types):
             raise TypeError(f"Unsupported data type for part x(input): {type(x)}")
         if y is not None and not isinstance(y, allowed_types):
@@ -103,6 +104,19 @@ class ModelManager:
                 inputs = {model.inputs[0].name: model.inputs[0].shape}
                 outputs = {'default': model.structured_outputs['default']}  # IMPROVE: iterate
             pass
+        elif model_signature == _ModelSignature.TLDyamicModel.signature:
+            params_model = Params(model_func=None, model_args=None, weights_path=None).update_to(params)
+            import tensorflow as tf
+            import os.path as osp
+            if params_model.model_func is None:
+                raise ValueError(f"model_func must be specified for a '{model_signature}' model")
+            idx_last_sep = params_model.model_func.rfind('.')
+            module = safe_import_module(params_model.model_func[:idx_last_sep])
+            model_func = getattr(module, params_model.model_func[idx_last_sep+1:])
+            model = model_func(**params_model.model_args)
+            if params_model.weights_path is not None:
+                weights_path = ModelManager._validate_path(params_model.weights_path)
+                model.load_weights(weights_path, skip=True)
         elif model_signature == _ModelSignature.TFHub_KerasLayer.signature:
             import tensorflow_hub as tf_hub
             # format_ = ModelManager._validate_format(params['format'], _ModelSignature.TFSavedModel)
@@ -340,8 +354,7 @@ class ModelManager:
     # IMPROVE: predict => infer, prediction => inference (method names and config keys)?
     @staticmethod
     def model_predict(model: object, data: object, **params) -> object:
-        params_predict = Params(decode_prediction=Params(name='logits_to_index'),
-                                show_result=Params(top_k=20, only_difference=True)).update_to(params)
+        params_predict = Params(decode_prediction=None, show_result=None).update_to(params)
         predictions = None
         x, y = ModelManager._validate_input(data)
 
@@ -355,21 +368,37 @@ class ModelManager:
                 return model.predict(inputs)
             elif callable(model):
                 # type(model).__name__ == "tensorflow.python.eager.wrap_function.WrappedFunction"
+                input_spec = Params(input_num=None).left_join(params_predict)
+                params = {}
+                # IMPROVE: judge the base class of model, to append required params
+                if model.__module__.startswith("modules.models.tensorlayer"):
+                    params.update({'is_train': False})
                 if isinstance(inputs, tf.data.Dataset):
-                    # IMPROVE: stack result as a tensor
-                    result = []
-                    for t in inputs:
-                        result.append(model(t))
-                    return tf.stack(result)
+                    # TODO: specify InputSpec for prediction
+                    if input_spec.input_num is None:
+                        return model(inputs, **params)
+                    elif isinstance(input_spec.input_num, int):
+                        # TODO: test needed
+                        inputs.batch(input_spec.input_num)
+                        result = []
+                        for batch in inputs:
+                            inputs_list = [_ for _ in batch]
+                            inputs_list = inputs_list[0] is len(inputs_list) == 1
+                            result.append(model(inputs_list, **params))
+                        # return tf.stack(result)
+                        return result
+                    else:
+                        raise ValueError(f'cannot handle input_spec.input_num={input_spec.input_num}')
                 else:
-                    return model(inputs)
+                    result = model(inputs, **params)
+                    return result
             else:
                 raise TypeError(f"Unsupported model type: {type(model)}")
 
         predictions = _predict(x)
         if predictions is None or safe_get_len(predictions) == 0:
             WARN("Predictions is blank.")
-            return None
+            return predictions  # None
 
         if params_predict.decode_prediction.is_defined():
             if params_predict.decode_prediction.name == 'logits_to_index':
@@ -398,65 +427,68 @@ class ModelManager:
             WARN("Predictions is blank (after decoding).")
             return None
 
-        if params_predict.show_result.is_defined() and isinstance(predictions, np.ndarray):
-            x_show, p_show, y_show = x, predictions, y  # NOTE: y(=label) is optional (default:None)
-            if params_predict.show_result.only_difference:
-                if hasattr(y_show, '__len__'):
-                    if p_show.__len__() == y_show.__len__():
-                        differences = p_show != y_show
-                        x_show, p_show, y_show = x_show[differences], p_show[differences], y_show[differences]
+        if params_predict.show_result.is_defined():
+            if isinstance(predictions, np.ndarray):
+                # IMPROVE: support `show_result.inputs_type/outputs_type` e.g.'images''features''label_indexes'
+                x_show, p_show, y_show = x, predictions, y  # NOTE: y(=label) is optional (default:None)
+                if params_predict.show_result.only_difference:
+                    if hasattr(y_show, '__len__'):
+                        if p_show.__len__() == y_show.__len__():
+                            differences = p_show != y_show
+                            x_show, p_show, y_show = x_show[differences], p_show[differences], y_show[differences]
+                        else:
+                            WARN(f"Cannot dump differences: len of targets is not same as predictions"
+                                 f"({y_show.__len__()} vs {p_show.__len__()})")
                     else:
-                        WARN(f"Cannot dump differences: len of targets is not same as predictions"
-                             f"({y_show.__len__()} vs {p_show.__len__()})")
-                else:
-                    WARN(f"Cannot dump differences: unsupported y type(={type(y_show)})")
-                INFO(f"Number of mismatch between prediction and truth: {len(p_show)}")
-            if params_predict.show_result.get('top_k', None) is not None:
+                        WARN(f"Cannot dump differences: unsupported y type(={type(y_show)})")
+                    INFO(f"Number of mismatch between prediction and truth: {len(p_show)}")
+                if params_predict.show_result.get('top_k', None) is not None:
+                    top_k = params_predict.show_result.top_k
+                    # TODO: sorting? 1.use tf.math.top_k  2.diff algorithm need to be specified
+                    x_show, p_show, y_show = (safe_slice(_, end=top_k) for _ in (x_show, p_show, y_show))
+                if len(p_show) > 0:
+                    dumps = []
+                    for i, p in enumerate(p_show):
+                        if not hasattr(y_show, '__len__') or y_show.__len__() <= i:
+                            dumps.append(f"{p}")
+                        else:
+                            dumps.append(f"({p} vs {y_show[i]})")
+                    need_to_show = params_predict.show_result.plotter.__len__() > 0
+                    need_to_save = params_predict.show_result.save_path.__len__() > 0
+                    only_save = params_predict.show_result.only_save
+                    if need_to_show or need_to_save:
+                        def denormalize(x):
+                            x = x * 255
+                            if hasattr(x, 'astype'):  # np.ndarray
+                                return x.astype(np.int32)
+                            else:
+                                return tf.cast(x, tf.int32)  # tf.Tensor
+                        # IMPROVE: use signature to match normalize and `un-normalize` routines
+                        if hasattr(x_show, "dtype") and x_show.dtype.name.startswith('float'):
+                            x_show = denormalize(x_show)
+                        elif hasattr(x_show, "element_spec") and \
+                            hasattr(x_show.element_spec, "dtype") and x_show.element_spec.dtype.name.startswith('float'):
+                            x_show = x_show.map(denormalize)
+                    save_dir, save_paths = None, None
+                    if need_to_save:
+                        save_dir = path_possibly_formatted(params_predict.show_result.save_path)
+                        # save_paths = [osp.join(save_dir, _+'.jpg') for _ in dumps]
+                    if params_predict.show_result.plotter == "matplot":
+                        onlysave_path = None
+                        if only_save:
+                            if need_to_save:
+                                from helpers.util import tmp_filename_by_time
+                                onlysave_path = osp.join(save_dir, tmp_filename_by_time('jpg'))
+                                need_to_save = False
+                            else:
+                                WARN('only_save is true, but save_path is not specified. ignored')
+                        show_image_mats(x_show, texts=dumps, title="Predictions", onlysave_path=onlysave_path)
+                    else:
+                        INFO(f"Predictions{'(only diff)' if 'differences' in vars() else ''}: " + ", ".join(dumps))
+                    # if need_to_save:
+                    #     save_image_mats(x_show, save_paths)
+            else:
                 top_k = params_predict.show_result.top_k
-                # TODO: sorting? 1.use tf.math.top_k  2.diff algorithm need to be specified
-                x_show, p_show, y_show = (safe_slice(_, end=top_k) for _ in (x_show, p_show, y_show))
-            if len(p_show) > 0:
-                dumps = []
-                for i, p in enumerate(p_show):
-                    if not hasattr(y_show, '__len__') or y_show.__len__() <= i:
-                        dumps.append(f"{p}")
-                    else:
-                        dumps.append(f"({p} vs {y_show[i]})")
-                need_to_show = params_predict.show_result.plotter.__len__() > 0
-                need_to_save = params_predict.show_result.save_path.__len__() > 0
-                only_save = params_predict.show_result.only_save
-                if need_to_show or need_to_save:
-                    def denormalize(x):
-                        x = x * 255
-                        if hasattr(x, 'astype'):  # np.ndarray
-                            return x.astype(np.int32)
-                        else:
-                            return tf.cast(x, tf.int32)  # tf.Tensor
-                    # IMPROVE: use signature to match normalize and `un-normalize` routines
-                    if hasattr(x_show, "dtype") and x_show.dtype.name.startswith('float'):
-                        x_show = denormalize(x_show)
-                    elif hasattr(x_show, "element_spec") and \
-                        hasattr(x_show.element_spec, "dtype") and x_show.element_spec.dtype.name.startswith('float'):
-                        x_show = x_show.map(denormalize)
-                save_dir, save_paths = None, None
-                if need_to_save:
-                    save_dir = path_possibly_formatted(params_predict.show_result.save_path)
-                    # save_paths = [osp.join(save_dir, _+'.jpg') for _ in dumps]
-                if params_predict.show_result.plotter == "matplot":
-                    onlysave_path = None
-                    if only_save:
-                        if need_to_save:
-                            from helpers.util import tmp_filename_by_time
-                            onlysave_path = osp.join(save_dir, tmp_filename_by_time('jpg'))
-                            need_to_save = False
-                        else:
-                            WARN('only_save is true, but save_path is not specified. ignored')
-                    show_image_mats(x_show, texts=dumps, title="Predictions", onlysave_path=onlysave_path)
-                else:
-                    INFO(f"Predictions{'(only diff)' if 'differences' in vars() else ''}: " + ", ".join(dumps))
-                # if need_to_save:
-                #     save_image_mats(x_show, save_paths)
-        else:
-            top_k = params_predict.show_result.top_k
-            INFO(f"Predictions(top{top_k}): {safe_slice(predictions, end=top_k)}")
+                INFO(f"Predictions(top{top_k}): {safe_slice(predictions, end=top_k)}")
+
         return predictions
