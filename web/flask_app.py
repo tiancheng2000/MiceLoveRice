@@ -1,4 +1,4 @@
-from helpers.util import DEBUG, INFO, WARN, ERROR, get_new_name_if_exists, Params
+from helpers.util import DEBUG, INFO, WARN, ERROR, get_new_name_if_exists, Params, ensure_dir_exists
 from typing import Callable, Iterable
 
 __all__ = [
@@ -8,11 +8,13 @@ __all__ = [
 # IMPROVE: use map cache: (package_name, root_path) -> webapp instance
 app = None
 
-from flask import Flask, request
+from shutil import copyfile
+from flask import Flask, request, url_for, current_app
 
 
 class WebApp(Flask):
     EventUploads = 'uploads'
+    EventTaskQuery = 'task_query'
 
     def __init__(self, *args, **kwargs):
         super(self.__class__, self).__init__(*args, **kwargs)
@@ -50,6 +52,13 @@ class WebApp(Flask):
         """
         return self.on(event_name=self.__class__.EventUploads, namespace=namespace, onetime=onetime)
 
+    def on_task_query(self, namespace=None, onetime=False) -> Callable:
+        """
+        Arguments of a handler: task_id
+        Return value of a handler: task status and result
+        """
+        return self.on(event_name=self.__class__.EventTaskQuery, namespace=namespace, onetime=onetime)
+
     # --- for dispatch to subscribers ---------------
     def dispatch_handlers(self, event_name: str, *args, namespace=None, **kwargs):
         """
@@ -61,7 +70,9 @@ class WebApp(Flask):
         """
         handler_results = []
         to_delete = set()
-        for _event_name, _namespace, _handler, _is_onetime in self.handlers:
+        # IMPROVE: use mutex to prevent handlers add/delete during processing
+        handlers = self.handlers.copy()
+        for _event_name, _namespace, _handler, _is_onetime in handlers:
             if _event_name == event_name and (namespace is None or _namespace == namespace):
                 try:
                     # import inspect
@@ -96,7 +107,6 @@ class WebApp(Flask):
         Generally we need to launch web app in another loop/thread, to not block ML operations.
         """
         webapp = self
-        self.__class__.hack_webapp(webapp, params.get('host', None), params.get('port', None))
 
         # IMPROVE: web app need not to run in an aysncio loop (host in a new thread), to run in a new thread is enough.
         from async_ import AsyncLoop, AsyncManager
@@ -107,16 +117,22 @@ class WebApp(Flask):
         DEBUG(f"[webapp_loop] listening to port {params.get('port', '<unknown>')} ...")
         return task
 
-    @staticmethod
-    def shutdown():
-        func = request.environ.get('werkzeug.server.shutdown')
-        if func is None:
-            raise RuntimeError('Not running with the Werkzeug Server')
-        func()
+    def is_running(self):
+        # IMPROVE: find official method to judge app status
+        return hasattr(self, 'host') and hasattr(self, 'port')
+
+    def shutdown(self):
+        # TODO: 'werkzeug.server.shutdown' is not available
+        with self.test_request_context('/', data={'key': 'value'}):
+            func = request.environ.get('werkzeug.server.shutdown')
+            if func is None:
+                raise RuntimeError('Not running with the Werkzeug Server')
+            func()
 
 
 def get_webapp(import_name=__name__, root_path=None, **params):
     """
+    Instantiate a WebApp, without running.
     Note that if an webapp instance already exists, if will be reused with arguments ignored.
     """
     from flask import flash, request, redirect, url_for, render_template, send_from_directory, send_file, make_response
@@ -126,11 +142,11 @@ def get_webapp(import_name=__name__, root_path=None, **params):
     import os.path as osp
     global app
 
-    if isinstance(app, Flask) and app.config  .import_name == import_name \
-            and (root_path is None or app.root_path == root_path):
+    # IMPROVE: if incoming root_path is None, check if existed `app.root_path` really equals default webapp path
+    if isinstance(app, Flask) and app.import_name == import_name and (root_path is None or app.root_path == root_path):
         return app
     elif app is not None:
-        WebApp.shutdown()  # close existing web app
+        app.shutdown()  # close existing web app, and recreate one
 
     app = WebApp(import_name, root_path=root_path)
     # -- non-configurable ----
@@ -249,6 +265,34 @@ def get_webapp(import_name=__name__, root_path=None, **params):
             task.cancel()
         # IMPROVE: wait a while and return result of cancelling
         # return ret
+
+    # TEMP: merge to task_query() later
+    @app.route('/api/0.1/current_task', methods=['GET'])
+    def task_query_current():
+        ret = {}  # status, result, error
+        # return finished only when the subscriber finished its current task
+        dispatch_arg = None  # TODO: task_id
+        dispatch_results = app.dispatch_handlers(app.__class__.EventTaskQuery, dispatch_arg)
+        if len(dispatch_results) == 0:
+            ret.update({'status': 'not_found'})
+        else:
+            dispatch_result = dispatch_results[0]  # TEMP
+            assert isinstance(dispatch_result, dict), f"dispatch_results is expected to be a dict, but get {type(dispatch_result)}"
+            # expected values: 1.{'status': 'processing'} 2.{'status': 'finished', 'result': '/experiments/.../...jpg'}
+            if dispatch_result.get('status', None) == 'finished':
+                # convert dispatch_result['result'] from abspath to url, including file copy
+                src_abspath = dispatch_result['result']
+                filename = osp.basename(src_abspath)
+                # copy abspath -> subfolder under 'static/'
+                dest_folder = 'history'
+                dest_abspath = osp.join(app.static_folder, dest_folder)
+                ensure_dir_exists(dest_abspath)
+                dest_abspath = osp.join(dest_abspath, filename)
+                copyfile(src_abspath, dest_abspath)
+                url = f'{app.static_url_path}/{dest_folder}/{filename}'
+                dispatch_result.update({'result': url})
+            ret.update(dispatch_result)
+        return ret
 
     @app.route('/hello/<string:message>')
     def say_hello(message=None):

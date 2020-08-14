@@ -1,0 +1,131 @@
+{
+    "description": "Style Transfer example based on TensorLayer 2",
+    "__BaseModelParams__": [
+        {"name": "", "signature": ""}
+    ],
+    "model_set": {
+        "model_enc": {
+            "signature": "tl.models.Model",
+            "format": "ModelFunc",
+            "model_func": "modules.models.tensorlayer.vgg.vgg19",
+            "model_args": {
+                "pretrained": false,
+                "end_with": "conv4_1"
+            },
+            "weights_path": {
+                "format": "{}/predefined_vgg19_endwith(conv4_1)_weights.h5",
+                "arg_names": ["experiment_path"]
+            }
+        },
+        "model_dec": {
+            "signature": "tl.models.Model",
+            "format": "ModelFunc",
+            "model_func": "modules.models.tensorlayer.vgg.vgg19_rev",
+            "model_args": {
+                "pretrained": false,
+                "batch_norm": false,
+                "input_depth": 512
+            },
+            "weights_path": {
+                "format": "{}/dec_34700(loss=427986048.00)_weights.h5",
+                "arg_names": ["experiment_path"]
+            }
+        }
+    },
+    "data_set": {
+        "data": {
+            "description": "NOT DEFINED. may use coco and kaggle datasets for training",
+            "signature": "folders",
+            "format": "Paths",
+            "paths": ["", ""],
+            "need_shuffle": true,
+            "shuffle_seed": 2020,
+            "test_split": 0,
+            "decode_x": {
+                "name": "decode_image_file",
+                "encoding": "jpg",
+                "normalize": true,
+                "reshape": [-1, 299, 299, 3]
+            }
+        },
+        "data_ui_test": {
+            "description": "listen to ui event to accept data",
+            "signature": "ui_web_files",
+            "format": "Paths",
+            "decode_x": {
+                "name": "decode_image_file",
+                "encoding": "jpg",
+                "normalize": false
+            }
+        },
+        "data_ui_test2": {
+            "description": "listen to ui event and accept data. files will be fed in reversed order of selection",
+            "signature": "ui_copy_files",
+            "format": "Paths",
+            "decode_x": {
+                "name": "decode_image_file",
+                "colormode": "rgb",
+                "color_transform": "complementary",
+                "normalize": false
+            }
+        }
+    },
+    "train": {
+        "description": "learning_rate may be set to 1e-3 if using batch_norm, otherwise 1e-4. TODO: 1.specify 2 models for encoder and decoder respectively. 2.low level train loop (optimizer+loss+trainable_vars) + loss manager 3.save/load weights for a part of model only",
+        "enabled": false,
+        "data_inputs": "data",
+        "validation_split": 0.2,
+        "epochs": 960,
+        "learning_rate": 1e-4,
+        "batch_size": 8,
+        "loss": {
+            "signature": "model.tensor",
+            "format": "Name",
+            "name": "loss"
+        },
+        "checkpoint": {
+            "signature": "tf.keras.Model.load_weights",
+            "format": "CKPT_dir",
+            "path": {
+                "arg_names": ["experiment_path"]
+            },
+            "load_weights": "latest",
+            "save_weights": {
+                "frequency": "epoch"
+            }
+        },
+        "early_stop": {
+            "monitor": "val_loss",
+            "patience": 10
+        },
+        "save_model": {
+            "format": "SavedModel",
+            "name": "dec_latest.h5"
+        },
+        "show_result": {
+            "plotter": "matplot",
+            "metrics": ["loss", "acc", "precision", "recall", "batch_loss", "batch_acc"]
+        }
+    },
+    "predict": {
+        "description": "NOTE: `input_num`/`input_spec` is not used, but worth implement",
+        "enabled": true,
+        "async_task": true,
+        "data_inputs": "data_ui_test",
+        "input_num": 2,
+        "decode_prediction": null,
+        "show_result": null
+    },
+    "predict_enc": {
+        "description": "NOTE: `input_num`/`input_spec` is not used ('cause we split enc and dec), but worth implement",
+        "enabled": true,
+        "decode_prediction": null,
+        "show_result": null
+    },
+    "predict_dec": {
+        "enabled": true,
+        "decode_prediction": null,
+        "show_result": null
+    }
+}
+

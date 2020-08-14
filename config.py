@@ -43,7 +43,8 @@ class Config:
         GrayscaleImagePath = "/tmp/0_00001.jpg"
         ImagenetLabelsPath = "/tmp/Dataset/imagenet/imagenet_slim_labels.txt"
 
-    __ExperimentNames__ = ['retrain/inceptresv2+scansnap(6class)',  # 2020/07/03
+    __ExperimentNames__ = ['styletransfer/vgg(tensorlayer)+vgg_rev(adain)+kaggle_coco',  # 2020/07/28
+                           'retrain/inceptresv2+scansnap(6class)',  # 2020/07/03
                            'tripletloss/inceptresv2_tlearn33c+tripletloss+ykk(5c,251)',  # 2020/05/25
                            'tripletloss/simple_sequential+tripletloss+mnist',  # 2020/04/09
                            '_test_/tf_1x_to_2x_3',  # 2020/03/31,筑基
@@ -51,7 +52,7 @@ class Config:
                            '_test_/embedding_distance',  # 2020/03/24
                            'tripletloss/inceptresv2_tlearn33c+tripletloss+miniset(138+3,gray)'  # 2020/03/23
                            ]
-    _ExperimentName = __ExperimentNames__[3]  # <== select an active experiment
+    _ExperimentName = __ExperimentNames__[0]  # <== select an active experiment
 
     @classproperty  # IMPROVE: use class property
     def ExperimentName(self=None) -> str: return Config._ExperimentName
