@@ -46,6 +46,7 @@ class AsyncLoop(enum.Enum):
     Main = 'main'
     UIThread = 'ui_thread'
     WebApp = 'web_app'
+    DataInput = 'data_input'
     DataProcess = 'data_process'
 
     def __str__(self):
@@ -72,6 +73,7 @@ class AsyncManager:
         # class methods depends on cls.__instance__ called from here.
         self.append_new_loop(id=AsyncLoop.UIThread)
         self.append_new_loop(id=AsyncLoop.WebApp)
+        self.append_new_loop(id=AsyncLoop.DataInput)
         self.append_new_loop(id=AsyncLoop.DataProcess)
 
     @classmethod

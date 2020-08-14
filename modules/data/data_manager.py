@@ -3,7 +3,7 @@ import enum
 import os.path as osp
 
 from helpers.util import DEBUG, INFO, WARN, ERROR, Params, dump_iterable_data, path_possibly_formatted, ensure_web_app,\
-    safe_import_module
+    safe_import_module, hasmethod
 
 __all__ = [
     "DataManager",
@@ -56,11 +56,30 @@ class DataManager:
         import modules.data.decode_tf as decode_tf
         import tensorflow as tf
         # IMPROVE: accept different kinds of input data
-        data_list = []
-        for path in paths:
-            data_list.append(decode_tf.decode_image_file(tf.convert_to_tensor(path), **params_decode))
-        data_t = tf.data.Dataset.from_tensor_slices(data_list)
+        # NOTE: do not use list + from_tensor_slices(), which can only handle images with same size
+        # data_list = []
+        # for path in paths:
+        #     data_list.append(decode_tf.decode_image_file(tf.convert_to_tensor(path), **params_decode))
+        # data_t = tf.data.Dataset.from_tensor_slices(data_list)
+        def map_path_to_image(path_t):
+            return decode_tf.decode_image_file(path_t, **params_decode)
+        data_t = tf.data.Dataset.from_tensor_slices(paths)
+        data_t = data_t.map(map_path_to_image)
         return data_t
+
+    # IMPROVE: allow min and max, signed value
+    @staticmethod
+    def denormalize(obj, max=255, type_=int):
+        if hasmethod(obj, 'max'):
+            if obj.max() > 1:
+                WARN(f"obj.max exceeds 1.0, no denormalize (nor type cast) will be done.")
+                return obj
+        obj *= max
+        if hasattr(obj, 'astype'):
+            return obj.astype(type_)  # np.ndarray
+        else:
+            import tensorflow as tf
+            return tf.cast(obj, tf.uint8 if type_ is int else tf.float32)  # tf.Tensor
 
     @staticmethod
     def load_data(data_signature: str, category="all", meta_info=None, **params) -> object:
@@ -122,11 +141,26 @@ class DataManager:
                                    color_transform=None, normalize=True).left_join(params_data.decode_x)
 
             def _process(event_type, abspath_or_list):
+                nonlocal data
                 INFO(f"clipboard event: path={abspath_or_list}")
-                return DataManager._process_files(abspath_or_list, **params_decode)
-            from helpers.qt5helper import ClipboardMonitor
+                data = DataManager._process_files(abspath_or_list, **params_decode)
+            from helpers.qt_helper import ClipboardMonitor
             monitor_type = "Path_File" if params_data.format == "Path" else "PathList"
-            data = ClipboardMonitor([monitor_type]).run(_process, True)
+
+            # NOTE: use AsyncTask to impl async clipboard monitoring loop.
+            # data = ClipboardMonitor([monitor_type]).run(_process, True)  #<- will get blank result on a fault copy
+            from async_ import AsyncLoop, AsyncManager
+            async def coro_clipboard_monitor(): ClipboardMonitor([monitor_type]).run(_process, onetime=True)
+            task = AsyncManager.run_task(coro_clipboard_monitor(), loop=None)  # block current loop
+            DEBUG(f"[input_loop] monitoring clipboard with type {monitor_type} ...")
+
+            # wait until task done TODO: impl a context_manager for simple await
+            import asyncio
+            loop = asyncio.get_event_loop()  # block current loop
+            async def coro_simple_wait(timeout=None):
+                while data is None:  # IMPROVE: implement timeout. maybe wait_for(this_task)
+                    await asyncio.sleep(1)
+            loop.run_until_complete(coro_simple_wait(timeout=None))
 
         elif data_signature == _DataSignature.UI_Web_Files.signature:
             # path = DataManager._validate_path(params_data.path)
@@ -157,14 +191,8 @@ class DataManager:
 
                 # from helpers.tf_helper import image_example
                 # IMPROVE: try to use TFRecordDataset.from_tensors([tf_example])
+                data = DataManager._process_files(filepaths, **params_decode)
 
-                def map_path_to_image(path_t):
-                    return decode_tf.decode_image_file(path_t, **params_decode)
-
-                data = tf.data.Dataset.from_tensor_slices(filepaths)
-                # this_task.progress = 0.5
-                data = data.map(map_path_to_image)
-                # this_task.progress = 1.0
                 result.update({'data': data})
                 # # if show inputs
                 # try:
@@ -194,7 +222,7 @@ class DataManager:
 
             # wait until get data uploaded
             import asyncio
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_event_loop()  # block current loop
             async def coro_simple_wait(timeout=None):
                 while data is None:  # IMPROVE: implement timeout. maybe wait_for(this_task)
                     await asyncio.sleep(1)

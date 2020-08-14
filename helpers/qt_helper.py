@@ -12,40 +12,42 @@ __all__ = [
 
 # Origin: LuPY.Qt5._Qt5, Lu Jiakai
 class ClipboardMonitor:
-    def __init__(self, pMode="Path", pQtApp=None, pIsBlockInCallback: bool = True):
+    FLAG_NO_RESULT = object()
+
+    def __init__(self, modes="Path", qt_app=None, is_block_in_cb: bool = True):
         """
-        :param pMode: Type to Monitor on clipboard
+        :param modes: Type to Monitor on clipboard
             “Path" = File or Folder Path, return str:
             "Path_File" = File Path, return str
             “PathList” --> [str]: list of Paths to return
             ”Screen" --> np.ndarray: Screen Image in BGRA
             "Image" --> np.ndarray: File Image and Screen, File ext contains .bmp .jpg .png
-        :param pQtApp:
-        :param pIsBlockInCallback:
+        :param qt_app:
+        :param is_block_in_cb: block in callbacks
         """
-        pMode = [pMode] if not isinstance(pMode, list) else pMode
-        assert [_ in ["Path", "Path_File", "PathList", "Screen", "Image"] for _ in pMode], f"Invalid pMode: {pMode}"
+        modes = [modes] if not isinstance(modes, list) else modes
+        assert [_ in ["Path", "Path_File", "PathList", "Screen", "Image"] for _ in modes], f"Invalid pMode: {modes}"
 
         # --- Params ---
-        self.Mode = pMode
-        self.QtApp = pQtApp
-        self.IsBlockInCallback = pIsBlockInCallback
+        self.Mode = modes
+        self.QtApp = qt_app
+        self.IsBlockInCallback = is_block_in_cb
 
         # --- Values ---
         self.IsInCallback: bool = False
         self.QtClipboard = None
         self.Callback = None
         self.IsRunOnce = False
-        self.CallResults = None
+        self.CallResults = self.__class__.FLAG_NO_RESULT
         pass
 
-    def run(self, pCallback: callable, pIsRunOnce: bool = False):
+    def run(self, cb: callable, onetime: bool = False):
         """
-        :param pCallback: func like (pMode:str, pVal:any). pMode is defined in __init__()
-        :param pIsRunOnce: bool, False: run only once
+        :param cb: func like (mode:str, value:any). mode is defined in __init__()
+        :param onetime: bool, False: run only once
         """
-        self.Callback = pCallback
-        self.IsRunOnce = pIsRunOnce
+        self.Callback = cb
+        self.IsRunOnce = onetime
 
         # --- Connect & Run
         INFO("")
@@ -58,7 +60,7 @@ class ClipboardMonitor:
         self.QtClipboard = self.QtApp.clipboard()
         self.QtClipboard.dataChanged.connect(self._slot_Clipboard_OnChanged)
         self.QtApp.exec()
-        return self.CallResults
+        return self.CallResults if self.CallResults is not self.__class__.FLAG_NO_RESULT else None
 
     def _slot_Clipboard_OnChanged(self):
         try:
@@ -77,7 +79,6 @@ class ClipboardMonitor:
                 for tUrl in tMimeData.urls():
                     tUrl: QtCore.QUrl = tUrl
                     tPath: str = tUrl.toLocalFile()
-                    # tPath = tPath.replace("/", "\\")  # os compatibility
                     tPath = tPath.replace(r'\/'.replace(os.sep, ''), os.sep)
 
                     # Check exist
@@ -86,26 +87,18 @@ class ClipboardMonitor:
                     tPathList.append(tPath)
 
                 # --- Distribute Message
-                if "Path_File" in self.Mode:
-                    for iPath in tPathList:
-                        if os.path.isfile(iPath):
-                            self.CallResults = self.Callback("Path_File", iPath)
+                if len(tPathList) > 0:
+                    if "Path_File" in self.Mode:
+                        for tPath in tPathList:
+                            if os.path.isfile(tPath):
+                                self.CallResults = self.Callback("Path_File", tPath)
 
-                if "PathList" in self.Mode:
-                    self.CallResults = self.Callback("PathList", tPathList)
+                    if "PathList" in self.Mode:
+                        self.CallResults = self.Callback("PathList", tPathList)
 
-                if "Path" in self.Mode:
-                    for tPath in tPathList:
-                        self.CallResults = self.Callback("Path", tPath)
-
-                if "Image" in self.Mode:
-                    # --- CV Import
-                    from .. import OpenCV as LuPy_Cv2
-                    for tPath in tPathList:
-                        tExt: str = os.path.splitext(tPath)[-1]
-                        if tExt.lower() in [".bmp", ".jpg", ".png"]:
-                            tMat = LuPy_Cv2.safe_imread(tPath, -1)
-                            self.CallResults = self.Callback("Image", tMat)
+                    if "Path" in self.Mode:
+                        for tPath in tPathList:
+                            self.CallResults = self.Callback("Path", tPath)
 
             # [B] Image Data
             if tMimeData.hasImage():
@@ -114,22 +107,18 @@ class ClipboardMonitor:
                 tPtr.setsize(tQImage.byteCount())
                 tMat = np.ndarray(buffer=tPtr, shape=[tQImage.height(), tQImage.width(), 4], dtype=np.uint8)
 
-                # --- XOR
-                if "Screen" in self.Mode:
-                    self.CallResults = self.Callback("Image", tMat)
-
-                elif "Image" in self.Mode:
+                if "Image" in self.Mode:
                     self.CallResults = self.Callback("Image", tMat)
 
         except Exception as e:
             WARN(f'Exception during clipboard event handling: {e}')
         finally:
             self.IsInCallback = False
-            if self.IsRunOnce:
-                self.Stop()
+            if self.IsRunOnce and self.CallResults is not self.__class__.FLAG_NO_RESULT:
+                self.stop()  # only stop after a successful handling
         pass
 
-    def Stop(self):
+    def stop(self):
         self.QtApp.quit()
         pass
 

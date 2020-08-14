@@ -125,6 +125,8 @@ function read_and_post(files) {
 	for (var i = 0; i < files.length; i++) {
 		if (tests.formdata)
 			formData.append('file', files[i]);  // NOTE: the key must be consistent with server side
+		var divObj = document.getElementById("img_result");
+		divObj.innerHTML = "";
 		previewfile(files[i]);
 	}
 

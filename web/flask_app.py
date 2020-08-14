@@ -9,7 +9,7 @@ __all__ = [
 app = None
 
 from shutil import copyfile
-from flask import Flask, request, url_for
+from flask import Flask, request, url_for, current_app
 
 
 class WebApp(Flask):
@@ -107,7 +107,6 @@ class WebApp(Flask):
         Generally we need to launch web app in another loop/thread, to not block ML operations.
         """
         webapp = self
-        self.__class__.hack_webapp(webapp, params.get('host', None), params.get('port', None))
 
         # IMPROVE: web app need not to run in an aysncio loop (host in a new thread), to run in a new thread is enough.
         from async_ import AsyncLoop, AsyncManager
@@ -118,16 +117,22 @@ class WebApp(Flask):
         DEBUG(f"[webapp_loop] listening to port {params.get('port', '<unknown>')} ...")
         return task
 
-    @staticmethod
-    def shutdown():
-        func = request.environ.get('werkzeug.server.shutdown')
-        if func is None:
-            raise RuntimeError('Not running with the Werkzeug Server')
-        func()
+    def is_running(self):
+        # IMPROVE: find official method to judge app status
+        return hasattr(self, 'host') and hasattr(self, 'port')
+
+    def shutdown(self):
+        # TODO: 'werkzeug.server.shutdown' is not available
+        with self.test_request_context('/', data={'key': 'value'}):
+            func = request.environ.get('werkzeug.server.shutdown')
+            if func is None:
+                raise RuntimeError('Not running with the Werkzeug Server')
+            func()
 
 
 def get_webapp(import_name=__name__, root_path=None, **params):
     """
+    Instantiate a WebApp, without running.
     Note that if an webapp instance already exists, if will be reused with arguments ignored.
     """
     from flask import flash, request, redirect, url_for, render_template, send_from_directory, send_file, make_response
@@ -137,11 +142,11 @@ def get_webapp(import_name=__name__, root_path=None, **params):
     import os.path as osp
     global app
 
-    # FIXME: import_name attr in app.config? => if yes, app.config.get('import_name', None) == import_name
-    if isinstance(app, Flask) and (root_path is None or app.root_path == root_path):
+    # IMPROVE: if incoming root_path is None, check if existed `app.root_path` really equals default webapp path
+    if isinstance(app, Flask) and app.import_name == import_name and (root_path is None or app.root_path == root_path):
         return app
     elif app is not None:
-        WebApp.shutdown()  # close existing web app
+        app.shutdown()  # close existing web app, and recreate one
 
     app = WebApp(import_name, root_path=root_path)
     # -- non-configurable ----
@@ -174,10 +179,6 @@ def get_webapp(import_name=__name__, root_path=None, **params):
     def upload_retrieve(filename):
         attach = request.values.get('attach', default=None) is not None
         return send_from_directory(app.config['UPLOAD_FOLDER'], filename, as_attachment=attach)
-
-    @app.route('/samples/test', methods=['POST'])
-    def samples_test():
-        return redirect(url_for('test'), code=301)
 
     @app.route('/api/0.1/uploads', methods=['POST'])
     @app.route('/api/0.1/uploads/<string:filename_to_update>', methods=['POST'])

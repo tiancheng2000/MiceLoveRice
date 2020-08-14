@@ -2,7 +2,7 @@ import enum
 import os.path as osp
 
 from helpers.util import DEBUG, INFO, WARN, Params, safe_get_len, ensure_dir_exists, path_possibly_formatted, \
-    show_image_mats, safe_slice, np_top_k, safe_import_module
+    show_image_mats, safe_slice, np_top_k, safe_import_module, iterable
 
 __all__ = [
     "ModelManager",
@@ -354,7 +354,7 @@ class ModelManager:
     # IMPROVE: predict => infer, prediction => inference (method names and config keys)?
     @staticmethod
     def model_predict(model: object, data: object, **params) -> object:
-        params_predict = Params(decode_prediction=None, show_result=None).update_to(params)
+        params_predict = Params(decode_prediction=Params({}), show_result=Params({})).update_to(params)
         predictions = None
         x, y = ModelManager._validate_input(data)
 
@@ -374,21 +374,32 @@ class ModelManager:
                 if model.__module__.startswith("modules.models.tensorlayer"):
                     params.update({'is_train': False})
                 if isinstance(inputs, tf.data.Dataset):
-                    # TODO: specify InputSpec for prediction
+                    # TODO: specify InputSpec (inputs element_spec) for prediction
                     if input_spec.input_num is None:
-                        return model(inputs, **params)
+                        pass
                     elif isinstance(input_spec.input_num, int):
-                        # TODO: test needed
-                        inputs.batch(input_spec.input_num)
-                        result = []
-                        for batch in inputs:
-                            inputs_list = [_ for _ in batch]
-                            inputs_list = inputs_list[0] is len(inputs_list) == 1
-                            result.append(model(inputs_list, **params))
-                        # return tf.stack(result)
-                        return result
+                        assert input_spec.input_num > 0, "input_num must > 0"
+                        # TODO: more test cases needed
+                        # inputs.batch(input_spec.input_num)
+                        # result = []
+                        # assert iterable(inputs)
+                        # for batch in inputs:
+                        #     inputs_list = [_ for _ in batch]
+                        #     inputs_list = inputs_list[0] if len(inputs_list) == 1 else inputs_list
+                        #     result.append(model(inputs_list, **params))
+                        # # return tf.stack(result)
+                        # return result[0] if len(result) == 1 else None if len(result) == 0 else result
+                        if input_spec.input_num > 1:
+                            inputs = inputs.batch(
+                                input_spec.input_num)  # NOTE: headed with a `batch_size` dim by this step
+                            # inputs = inputs.unbatch()
                     else:
                         raise ValueError(f'cannot handle input_spec.input_num={input_spec.input_num}')
+                    # NOTE: callable model might not support batch feeding. so it's up to caller to constrain the size.
+                    result = []
+                    for inputs_ in inputs.as_numpy_iterator():
+                        result.append(model(inputs_, **params))  # NOTE: if input_num > 1
+                    return result[0] if len(result) == 1 else None if len(result) == 0 else result
                 else:
                     result = model(inputs, **params)
                     return result
@@ -420,6 +431,9 @@ class ModelManager:
                     predictions = tf.math.top_k(input=predictions, k=top_k)
                 else:
                     raise TypeError(f"Unsupported type for logits_to_indices_and_probs: {type(predictions)}")
+            elif params_predict.decode_prediction.name == 'image_denormalize':
+                from modules.data.data_manager import DataManager
+                predictions = DataManager.denormalize(predictions)
             else:
                 raise ValueError(
                     f"Unsupported result decoding: {params_predict.decode_prediction.name}")
@@ -457,18 +471,13 @@ class ModelManager:
                     need_to_save = params_predict.show_result.save_path.__len__() > 0
                     only_save = params_predict.show_result.only_save
                     if need_to_show or need_to_save:
-                        def denormalize(x):
-                            x = x * 255
-                            if hasattr(x, 'astype'):  # np.ndarray
-                                return x.astype(np.int32)
-                            else:
-                                return tf.cast(x, tf.int32)  # tf.Tensor
-                        # IMPROVE: use signature to match normalize and `un-normalize` routines
+                        # IMPROVE: use signature to match normalize and `denormalize` routines
+                        from modules.data.data_manager import DataManager
                         if hasattr(x_show, "dtype") and x_show.dtype.name.startswith('float'):
-                            x_show = denormalize(x_show)
+                            x_show = DataManager.denormalize(x_show)
                         elif hasattr(x_show, "element_spec") and \
                             hasattr(x_show.element_spec, "dtype") and x_show.element_spec.dtype.name.startswith('float'):
-                            x_show = x_show.map(denormalize)
+                            x_show = x_show.map(DataManager.denormalize)
                     save_dir, save_paths = None, None
                     if need_to_save:
                         save_dir = path_possibly_formatted(params_predict.show_result.save_path)

@@ -43,7 +43,7 @@ class Config:
         GrayscaleImagePath = "/tmp/0_00001.jpg"
         ImagenetLabelsPath = "/tmp/Dataset/imagenet/imagenet_slim_labels.txt"
 
-    __ExperimentNames__ = ['styletransfer/vgg+vgg_rev(adain)+kaggle_coco',  # 2020/07/28
+    __ExperimentNames__ = ['styletransfer/vgg(tensorlayer)+vgg_rev(adain)+kaggle_coco',  # 2020/07/28
                            'retrain/inceptresv2+scansnap(6class)',  # 2020/07/03
                            'tripletloss/inceptresv2_tlearn33c+tripletloss+ykk(5c,251)',  # 2020/05/25
                            'tripletloss/simple_sequential+tripletloss+mnist',  # 2020/04/09

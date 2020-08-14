@@ -552,6 +552,10 @@ def test_web_flask_app():
     # 0. initialize a web app
     from web import get_webapp
     webapp = get_webapp()
+    assert not webapp.is_running()
+    # TEST: successive call to `get_webapp()` will reuse the same instance
+    webapp_new = get_webapp()
+    assert webapp_new is webapp
     config_deploy = ConfigSerializer.load(Path.DeployConfigAbs)
     import os.path as osp
     webapp.config['UPLOAD_FOLDER'] = config_deploy.web.upload_folder if osp.isabs(config_deploy.web.upload_folder)\
@@ -624,7 +628,6 @@ def test_web_flask_app():
         async def coro_webapp_run(**params): webapp.run(**params)
         webapp_loop = AsyncManager.get_loop(AsyncLoop.WebApp)
         task_dumb = AsyncManager.run_task(coro_webapp_run(**params_webapp), loop=webapp_loop)
-        INFO(f"listening to port {params_webapp.port}")
 
         import time
         from helpers.util import adjust_interrupt_handlers
@@ -632,13 +635,23 @@ def test_web_flask_app():
         try:
             interval = 1
             i = 0
+            flag_notify_webapp_running = True
+            flag_test_ensure_webapp = True
             while True:
+                if webapp.is_running() and flag_notify_webapp_running:
+                    INFO(f"webapp is running and listening to port {webapp.port}")
+                    flag_notify_webapp_running = False
+                if webapp.is_running() and flag_test_ensure_webapp:
+                    current_host, current_port = webapp.host, webapp.port
+                    webapp_new = ensure_web_app()
+                    assert webapp_new is webapp and webapp.host == current_host and webapp.port == current_port
+                    flag_test_ensure_webapp = False
                 DEBUG(f"[master thread] Waiting...{i * interval} seconds")
                 time.sleep(interval)
                 i += 1
         except KeyboardInterrupt:
             INFO("----- Keyboard interruption -----")
-            # loop.stop()
+            # TODO: impl await context-manager, and wait until `not webapp.is_running` after `webapp.shutdown()`
             webapp_loop.call_soon_threadsafe(webapp_loop.stop)
 
 

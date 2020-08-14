@@ -70,8 +70,10 @@ __all__ = [
     "indices_in_vocabulary_list",
     "safe_get",
     "hasmethod",
+    "iterable",
     # -- Thread Process ---------------
     "print_time_consumed",
+    "async_wait",
     # -- Quick Test -------------------
     "quick_load_image_tensor",
     "quick_load_imagenet_labels",
@@ -352,7 +354,7 @@ class Params(dict):
         """
         # TODO: important logic change! regression test required (2020/08/07)
         # return len(self) > 0
-        return self is self.__class__._key_missed_value
+        return self is not self.__class__._key_missed_value
 
     def get(self, key, *args):
         # deprecated: return super(Params, self).get(key, default if default is not None else {})
@@ -385,7 +387,7 @@ class Params(dict):
             value_in_others = others.get(key, key_missed_value)
             # 2.recursively update if node is a Params object
             if isinstance(value, self.__class__):
-                if (value_in_other, value_in_others) == (None, None):
+                if value_in_other is None and value_in_others in (None, key_missed_value):
                     to_delete.append(key)  # FD: 'key: null' in right side => clear left side => .is_defined()==False
                 else:
                     if not all(_ is None or _ is key_missed_value for _ in (value_in_other, value_in_others)):
@@ -438,11 +440,15 @@ class Params(dict):
                 key_missed_value = self.__class__._key_missed_value
                 value_in_other = other.get(key, key_missed_value)
                 value_in_others = others.get(key, key_missed_value)
-                if (value_in_other, value_in_others) == (None, None):
+                # NOTE: `**others`, not same as `other`, is allowed to be `undefined` while `other` is `key: null`
+                if value_in_other is None and value_in_others in (None, key_missed_value):
                     to_delete.append(key)  # FD: 'key: null' in right side => clear left side
+                    del other[key]
+                    if key in others:
+                        del others[key]
                 else:
                     if not all(_ is None or _ is key_missed_value for _ in (value_in_other, value_in_others)):
-                        value.update(value_in_other, key_map, **value_in_others)
+                        value.update(value_in_other or {}, key_map, **(value_in_others or {}))
                         self[key] = value
                         if key in other:
                             del other[key]
@@ -561,11 +567,15 @@ def ensure_web_app():
     from web import get_webapp
     webapp = get_webapp(**params_webapp)
 
-    params_webapp_run = Params(host="127.0.0.1", port="2020", ssl_context=None) \
-        .left_join(config_deploy.web, {"host": "local_ip", "port": "local_port"})
-    if config_deploy.web.use_https:
-        params_webapp_run.ssl_context = (config_deploy.web.certfile_path, config_deploy.web.keyfile_path)
-    webapp.async_run(**params_webapp_run)
+    if not webapp.is_running():  # make sure a default web app instance is running
+        params_webapp_run = Params(host="127.0.0.1", port="2020", ssl_context=None) \
+            .left_join(config_deploy.web, {"host": "local_ip", "port": "local_port"})
+        if config_deploy.web.use_https:
+            params_webapp_run.ssl_context = (config_deploy.web.certfile_path, config_deploy.web.keyfile_path)
+        webapp.async_run(**params_webapp_run)
+
+    async_wait(lambda: webapp.is_running(), timeout=None)
+
     return webapp
 
 
@@ -580,6 +590,15 @@ def print_time_consumed(format_: str = "[INFO] time consumed: {:.5f}s", file=sys
     yield
     time_now = time.time()
     print(format_.format(time_now - time_begin), file=file)
+
+def async_wait(check_fn: callable, loop=None, timeout=None):
+    assert callable(check_fn), f"check_fn must be callable: {check_fn}"
+    import asyncio
+    loop = loop or asyncio.get_event_loop()  # by default, will block current loop
+    async def coro_simple_wait(timeout=None):
+        while not check_fn():  # TODO: implement timeout
+            await asyncio.sleep(1)
+    loop.run_until_complete(coro_simple_wait(timeout=timeout))
 
 # -----------------------------------------------------#
 # -- Libraries, Packages ---------------
@@ -1001,7 +1020,7 @@ def dict_left_join(self, other: dict, key_map: dict = None, _cross_join=False, *
         value_in_others = others.get(key, key_missed_value)
         # 2.recursively update if node is a Params object
         if isinstance(value, self.__class__):
-            if (value_in_other, value_in_others) == (None, None):
+            if value_in_other is None and value_in_others in (None, key_missed_value):
                 to_delete.append(key)  # FD: 'key: null' in right side => clear left side => .is_defined()==False
             else:
                 if not all(_ is None or _ is key_missed_value for _ in (value_in_other, value_in_others)):
@@ -1054,7 +1073,7 @@ def dict_update(self, other: dict, key_map: dict = None, **others):
             key_missed_value = self.__class__._key_missed_value
             value_in_other = other.get(key, key_missed_value)
             value_in_others = others.get(key, key_missed_value)
-            if (value_in_other, value_in_others) == (None, None):
+            if value_in_other is None and value_in_others in (None, key_missed_value):
                 to_delete.append(key)  # FD: 'key: null' in right side => clear left side
             else:
                 if not all(_ is None or _ is key_missed_value for _ in (value_in_other, value_in_others)):
@@ -1119,6 +1138,9 @@ def safe_get(collection: Any, key, default_value=None):
 
 def hasmethod(obj, name):
     return hasattr(obj, name) and callable(obj.__getattribute__(name))
+
+def iterable(obj):
+    return hasmethod(obj, '__iter__') or hasmethod(obj, '__getitem__')
 
 # -----------------------------------------------------#
 # -- Quick Test -------------------
