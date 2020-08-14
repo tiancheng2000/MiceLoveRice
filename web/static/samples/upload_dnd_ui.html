@@ -9,12 +9,21 @@
 <style>
 #message { border: 1px solid #eee; width: 75%; margin: 5px auto; background-color: #ffe; padding: 2px; font-size: 14px; float: left;}
 /* for dragndrop file upload */
-#holder { border: 8px dashed #ccc; width: 75%; min-height: 150px; margin: 5px auto; float: left; clear: left;}
+#holder { border: 8px dashed #ccc; width: 100%; min-height: 150px; margin: 0 auto; clear: left; text-align: center}
 #holder.hover { border: 8px dashed #0c0; }
-#holder img { display: block; margin: 5px auto; }
+#holder img { display: inline-block; height: 400px; width: 400px; margin: 0 auto; }
 #holder p { margin: 10px; font-size: 14px; color: #ccc}
 #progress { width: 74%; float: left; clear: left;}
 #progress_div span { float: left; font-size: 10px; color: #ccc}
+
+.aligncenter {
+    clear: both;
+    display: block;
+    margin: 0 auto;
+	height: 400px;
+	width: 400px;
+}
+
 .fail { background: #c00; padding: 2px; color: #fff; }
 .hidden { display: none !important; }
 </style>
@@ -34,7 +43,7 @@ function ajaxRequest(method, url, request, callback) {
 </script>
 
 <body>
-<h2>Input of Remote Tasks:</h2>
+<h2 style="text-align:center">ImageTransfer</h2>
 <div>
 	<div id="message" class="hidden">
 	</div>
@@ -45,12 +54,12 @@ function ajaxRequest(method, url, request, callback) {
 		<p id="test_formdata">XHR2's FormData is not supported</p>
 		<p id="test_progress">XHR2's upload progress isn't supported</p>
 	</div>
-	<div id="progress_div">
-		<progress id="progress" max="100" value="0"></progress><span>&nbsp;</span><span id="progress_value">0</span><span>%</span>
-	</div>
+<!--	<div id="progress_div">-->
+<!--		<progress id="progress" max="100" value="0"></progress><span>&nbsp;</span><span id="progress_value">0</span><span>%</span>-->
+<!--	</div>-->
 </div>
+<div id='img_result' ></div>
 </body>
-
 <script type="text/javascript">
 //for drag&drop file upload -- BEGIN --
 var holder = document.getElementById('holder')
@@ -107,7 +116,7 @@ function previewfile(file) {
 	}
 }
 
-function readfiles(files) {
+function read_and_post(files) {
 	debugger;
 
 	//NOTE: For PUT method we can only upload 1 file for 1 xhr. (use multiple xhrs for multiple files.)
@@ -116,6 +125,8 @@ function readfiles(files) {
 	for (var i = 0; i < files.length; i++) {
 		if (tests.formdata)
 			formData.append('file', files[i]);  // NOTE: the key must be consistent with server side
+		var divObj = document.getElementById("img_result");
+		divObj.innerHTML = "";
 		previewfile(files[i]);
 	}
 
@@ -127,7 +138,7 @@ function readfiles(files) {
 		xhr.onload = function() {
 			progress.value = progress_value.innerHTML = 100;
 			message.innerHTML = this.responseText;  //this.responseXML(.responseType='document'), this.response(else)
-			message.className = '';  //show
+			//message.className = '';  //show
 		};
 
 		if (tests.progress) {
@@ -142,6 +153,36 @@ function readfiles(files) {
 	}
 }
 
+var temp_counter = 0
+function result_query() {
+	// temp_counter += 1;
+	// alert("result_query:"+temp_counter);
+
+	var xhr = new XMLHttpRequest();
+	xhr.open('GET', '/api/0.1/current_task', true);
+	xhr.onload = function() {
+		debugger;
+		ret = JSON.parse(this.responseText);
+		//TODO: ret.status, ret.result(=url of result image)
+		//.......
+		if (ret.status === 'finished'){
+			//alert('finished: ' + ret.result)
+			var url = ret.result
+			var divObj = document.getElementById("img_result");
+			divObj.innerHTML = "<img class='aligncenter' src="+url+"/>";
+		}
+	};
+	xhr.send();
+	// return temp_counter >= 3;
+}
+
+function result_query_until_completed() {
+	setInterval(() => {
+        result = result_query();
+    }, 2000);
+    //TODO: close the timer when finished.
+}
+
 if (tests.dnd) {
 	holder.ondragover = function() {
 		this.className = 'hover';
@@ -154,7 +195,8 @@ if (tests.dnd) {
 	holder.ondrop = function(e) {
 		this.className = '';
 		e.preventDefault();
-		readfiles(e.dataTransfer.files);
+		read_and_post(e.dataTransfer.files);
+		result_query_until_completed();  //improve: task_id
 	}
 } else {
 	fileupload.className = '';

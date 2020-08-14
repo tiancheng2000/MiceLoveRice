@@ -62,6 +62,8 @@ def test_util_miscs():
         INFO(f"  is `None`: {params_data.shuffle.not_existed is None}")
         params_data.left_join(config_experiment.data_set.data)
         INFO(f"params_data.decode_x after left_join: {params_data.decode_x}")
+        params_data.cross_join(config_experiment.data_set.data)
+        INFO(f"params_data.decode_x after cross_join: {params_data.decode_x}")
     elif __test_flow__ == 'data_process':
         dict1 = {'a': 1, 'b': 1, 'c': 1}
         dict2 = {'a': 1, 'b': 2, 'c': 3, 'd': 4}
@@ -227,61 +229,7 @@ def test_main():
     experiment_type = str(Config.ExperimentName).split('/')[0]
     INFO('Experiment Type: ' + experiment_type)
     if experiment_type == 'retrain':
-        from modules.models.model_manager import ModelManager
-        model = None
-        from modules.data.data_manager import DataManager
-        (x_train, y_train), (x_test, y_test) = (None, None), (None, None)
-
-        # 1. load training data + build and train a model
-        if config_experiment.train.enabled:
-            config_data_train: Params = config_experiment.data_set.data
-            meta_info = {}  # retrieve meta info from DataManager
-            data, _ = DataManager.load_data(config_data_train.signature,
-                                         meta_info=meta_info, **config_data_train)
-            # NOTE: data must have been shuffled before validation_split/test_split
-            INFO(f"data loaded: {dump_iterable_data(data)}")
-            # TODO: how to know the output_spec of `dm::load_data` => add a ref arg
-            import tensorflow as tf
-            if isinstance(data, tf.data.Dataset):
-                from helpers.tf_helper import tf_obj_to_np_array
-                # TODO: stop converting to np array.
-                # IMPROVE: unzip the ZipDataset by dataset.map(lambda). Any tf API for unzip?
-                x_train = tf_obj_to_np_array(data.map(lambda x, y: x))
-                y_train = tf_obj_to_np_array(data.map(lambda x, y: y))
-            vocabulary_list = meta_info.get('vocabulary', [])
-            filenames = meta_info.get('filenames', [])
-
-            config_model: Params = config_experiment.model_set.model_base
-            model_base = ModelManager.load_model(config_model.signature, **config_model)
-            assert isinstance(model_base, tf.keras.layers.Layer), f"model_base should be a tf.keras.Layer but get a {type(model_base)}"
-            config_model: Params = config_experiment.model_set.model_append
-            model_append = ModelManager.load_model(config_model.signature, **config_model)
-            assert isinstance(model_append, tf.keras.Sequential), f"model_append should be a tf.keras.Sequential but get a {type(model_append)}"
-            model = tf.keras.Sequential([model_base]+model_append.layers)
-            model.summary()
-            model = ModelManager.model_train(model, data=(x_train, y_train), **config_experiment.train)
-            if x_test is not None:
-                eval_metrics = ModelManager.model_evaluate(model, data=(x_test, y_test))
-
-        # 2. predict output of an input (by ui_web_files)
-        if config_experiment.predict.enabled:
-            if model is None:  # not config_experiment.train.enabled
-                config_model: Params = config_experiment.model_set.model_trained
-                model = ModelManager.load_model(config_model.signature, **config_model)
-
-            if x_test is None:
-                data_key = config_experiment.predict.data_inputs.__str__()
-                config_data_test: Params = config_experiment.data_set[data_key]
-                data = DataManager.load_data(config_data_test.signature, **config_data_test)
-                INFO(f"data loaded: {dump_iterable_data(data)}")
-                # TODO: how to know the output_spec of `dm::load_data` => add a ref arg
-                import tensorflow as tf
-                if isinstance(data, tf.data.Dataset):
-                    data = data.batch(1)  # IMPROVE: read config `batch_size`
-                    data = data.prefetch(1)
-                x_test, y_test = data, None
-
-            predictions = ModelManager.model_predict(model, (x_test, y_test), **config_experiment.predict)
+        # TODO: practice after tutorial
         pass
     elif experiment_type == '_test_':
         if Config.ExperimentName == '_test_/tf_1x_to_2x_3':
@@ -604,6 +552,10 @@ def test_web_flask_app():
     # 0. initialize a web app
     from web import get_webapp
     webapp = get_webapp()
+    assert not webapp.is_running()
+    # TEST: successive call to `get_webapp()` will reuse the same instance
+    webapp_new = get_webapp()
+    assert webapp_new is webapp
     config_deploy = ConfigSerializer.load(Path.DeployConfigAbs)
     import os.path as osp
     webapp.config['UPLOAD_FOLDER'] = config_deploy.web.upload_folder if osp.isabs(config_deploy.web.upload_folder)\
@@ -676,7 +628,6 @@ def test_web_flask_app():
         async def coro_webapp_run(**params): webapp.run(**params)
         webapp_loop = AsyncManager.get_loop(AsyncLoop.WebApp)
         task_dumb = AsyncManager.run_task(coro_webapp_run(**params_webapp), loop=webapp_loop)
-        INFO(f"listening to port {params_webapp.port}")
 
         import time
         from helpers.util import adjust_interrupt_handlers
@@ -684,13 +635,23 @@ def test_web_flask_app():
         try:
             interval = 1
             i = 0
+            flag_notify_webapp_running = True
+            flag_test_ensure_webapp = True
             while True:
+                if webapp.is_running() and flag_notify_webapp_running:
+                    INFO(f"webapp is running and listening to port {webapp.port}")
+                    flag_notify_webapp_running = False
+                if webapp.is_running() and flag_test_ensure_webapp:
+                    current_host, current_port = webapp.host, webapp.port
+                    webapp_new = ensure_web_app()
+                    assert webapp_new is webapp and webapp.host == current_host and webapp.port == current_port
+                    flag_test_ensure_webapp = False
                 DEBUG(f"[master thread] Waiting...{i * interval} seconds")
                 time.sleep(interval)
                 i += 1
         except KeyboardInterrupt:
             INFO("----- Keyboard interruption -----")
-            # loop.stop()
+            # TODO: impl await context-manager, and wait until `not webapp.is_running` after `webapp.shutdown()`
             webapp_loop.call_soon_threadsafe(webapp_loop.stop)
 
 
@@ -916,4 +877,16 @@ def test_np_misc(run_legacy=False):
         idxs = idxs.take(np.arange(top_k), axis=-1)
         INFO(f'idxs top_k:{idxs}')
         probs = np.take_along_axis(probs, idxs, axis=-1)  # not np.take()
-  
+
+
+def test_python_misc(run_legacy=False):
+    # -------------------------------------------------------------------------------------------
+    # [2020-07-28] import_module load method
+    from helpers.util import safe_import_module
+    module = safe_import_module("modules.models.tensorlayer.vgg")
+    method = getattr(module, "vgg19")
+    INFO(f"type of method: {type(method)}")
+
+    # --- Done ----------------------------------------------------------------------------------
+    if run_legacy:
+        pass
